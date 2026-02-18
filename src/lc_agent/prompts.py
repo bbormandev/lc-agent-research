@@ -1,0 +1,85 @@
+GATE_PROMPT = """You decide whether web search is needed.
+Return ONLY one word: YES or NO.
+
+Say YES if:
+- the question depends on recent info, prices, versions, current events, or anything likely to change
+- OR you are not confident without verifying sources
+- OR the user explicitly asks for sources
+
+Otherwise say NO.
+
+Question:
+{question}
+"""
+
+QUERY_PROMPT = """You generate web search queries.
+
+Given the user's question, produce 1-3 search queries that would likely return authoritative sources.
+Prefer official docs and reputable sources when possible.
+
+Return ONLY valid JSON in this exact format:
+{{
+  "queries": ["..."]
+}}
+
+Rules:
+- 1 to 3 queries
+- queries must be short (<= 12 words each)
+- no extra keys, no markdown
+
+Question:
+{question}
+"""
+
+EXTRACT_PROMPT = """You extract the most relevant passages from a document.
+
+Return ONLY valid JSON in this exact format:
+{
+  "passages": [
+    {"quote": "...", "why": "..."}
+  ]
+}
+
+Rules:
+- Extract 3 to 5 passages.
+- Each quote must be a direct excerpt from the provided document text.
+- Each quote must be <= 300 characters.
+- "why" must be <= 120 characters.
+- No extra keys. No markdown.
+
+Question:
+{question}
+
+Document:
+TITLE: {title}
+URL: {url}
+TEXT:
+{text}
+"""
+
+ANSWER_PROMPT = """You are a practical research assistant.
+Return ONLY valid JSON matching this schema:
+
+{{
+  "answer_bullets": ["..."],
+  "sources": {sources_json},
+  "did_search": {did_search},
+  "search_queries": {search_queries}
+}}
+
+Rules:
+- answer_bullets must be 4-8 bullets.
+- Every bullet MUST end with citations in square brackets, like: [S1] or [S1, S2].
+- There must be no punctuation after the citation, the citation must be the last characters in the bullet.
+- Citations must refer ONLY to the source IDs provided in sources (S1, S2, ...).
+- You MUST use the provided sources list exactly (do not change it).
+- If did_search is false, sources must be [] and search_queries must be [].
+- No extra keys. No markdown. JSON only.
+- Base claims only on the provided PASSAGES; if a detail isn't present, don't assert it.
+- If the passages are empty or insufficient, include 1 bullet noting that and keep the rest high-level.
+
+Question: {question}
+
+Source passages (may be empty):
+{context}
+"""
