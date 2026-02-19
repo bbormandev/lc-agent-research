@@ -56,6 +56,12 @@ def validate_citations(answer_bullets: list[str], sources: list[str]) -> None:
 		bad = [c for c in cited if c not in source_ids]
 		if bad:
 			raise RuntimeError(f"Bullet cites unknown sources {bad}: {b}")
+		
+def validate_summary(summary: str) -> None:
+    if not isinstance(summary, str) or not summary.strip():
+        raise RuntimeError("Missing or empty summary")
+    if "[" in summary or "]" in summary:
+        raise RuntimeError(f"Summary must not contain citations/brackets: {summary}")
 
 
 def ask_question(question: str, config: PipelineConfig, ctx: RunContext) -> dict:
@@ -155,6 +161,10 @@ def ask_question(question: str, config: PipelineConfig, ctx: RunContext) -> dict
 
 	# Your existing guardrails
 	validate_citations(data.get("answer_bullets", []), data.get("sources", []))
+	summary = data.get("summary")
+	if summary is None:
+		raise RuntimeError("Response missing required field: summary")
+	validate_summary(summary)
 
 	if did_search and not data.get("sources"):
 		raise RuntimeError("Expected sources when did_search=true, got empty sources.")

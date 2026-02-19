@@ -69,20 +69,24 @@ ANSWER_PROMPT = """You are a practical research assistant.
 Return ONLY valid JSON matching this schema:
 
 {{
+  "summary": "...",
   "answer_bullets": ["..."],
   "sources": {sources_json}
 }}
 
 Rules:
+- summary must be 1-3 sentences (<= 450 characters total).
+- summary must be a high-level synthesis of the answer_bullets and the provided PASSAGES.
+- summary must NOT include citations, brackets, or source IDs.
+- Do not introduce new facts in summary that are not supported by the PASSAGES.
 - answer_bullets must be 4-8 bullets.
 - Every bullet MUST end with citations in square brackets, like: [S1] or [S1, S2].
-- There must be no punctuation after the citation, the citation must be the last characters in the bullet.
+- There must be no punctuation after the citation; the citation must be the last characters in the bullet.
 - Citations must refer ONLY to the source IDs provided in sources (S1, S2, ...).
 - You MUST use the provided sources list exactly (do not change it).
-- If did_search is false, sources must be [] and search_queries must be [].
 - No extra keys. No markdown. JSON only.
 - Base claims only on the provided PASSAGES; if a detail isn't present, don't assert it.
-- If the passages are empty or insufficient, include 1 bullet noting that and keep the rest high-level.
+- If the passages are empty or insufficient, set summary to a cautious statement about limited evidence and include 1 bullet noting that.
 
 Question: {question}
 
