@@ -1,20 +1,25 @@
 GATE_PROMPT = """You decide whether web search is needed.
+Today is {today}.
+
 Return ONLY one word: YES or NO.
 
 Say YES if:
 - the question depends on recent info, prices, versions, current events, or anything likely to change
+- OR the question asks about a field or topic that changes frequently
 - OR you are not confident without verifying sources
 - OR the user explicitly asks for sources
 
-Otherwise say NO.
+Say NO if:
+- the question is conceptual or timeless (definitions, fundamentals) and can be answered without checking current sources
 
 Question:
 {question}
 """
 
 QUERY_PROMPT = """You generate web search queries.
+Today is {today}.
 
-Given the user's question, produce 1-3 search queries that would likely return authoritative sources.
+Given the user's question, produce 1-3 search queries that would likely return authoritative and recent sources.
 Prefer official docs and reputable sources when possible.
 
 Return ONLY valid JSON in this exact format:
@@ -25,6 +30,9 @@ Return ONLY valid JSON in this exact format:
 Rules:
 - 1 to 3 queries
 - queries must be short (<= 12 words each)
+- prefer official documentation, GitHub repos, reputable engineering blogs, or well-known vendors
+- avoid listicles
+- prefer resources that contain sources and examples
 - no extra keys, no markdown
 
 Question:

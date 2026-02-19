@@ -3,6 +3,7 @@ import json
 import sys
 
 from lc_agent.pipeline import PipelineConfig, ask_question
+from lc_agent.run_context import make_run_context
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,7 +42,8 @@ def main(argv: list[str] | None = None) -> int:
             max_sources=args.max_sources,
             model=args.model,
         )
-        result = ask_question(args.question, config)
+        ctx = make_run_context()
+        result = ask_question(args.question, config, ctx)
 
         print(json.dumps(result, indent=2))
         return 0
