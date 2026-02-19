@@ -25,7 +25,7 @@ The current implementation is intentionally simple and focused on the core pipel
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 cp .env.example .env
 ```
 
@@ -36,9 +36,9 @@ Edit the .env file and provide the required API keys:
 
 ## Usage
 
-At the moment, the query is hardcoded directly in the pipeline file. To change what the agent researches, update the question in that file and re-run the script. This will likely be replaced with a CLI or API interface in a future iteration.
+You can ask a question through the CLI using the `research` command and the `ask` subcommand while passing in the question. There is the optional flag of --max-sources to limit the number of sources fetched and extracted.
 
-`python -m lc_agent.pipeline`
+`research ask "{question}"`
 
 ## Notes
 

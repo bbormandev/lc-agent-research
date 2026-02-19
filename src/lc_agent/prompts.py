@@ -62,9 +62,7 @@ Return ONLY valid JSON matching this schema:
 
 {{
   "answer_bullets": ["..."],
-  "sources": {sources_json},
-  "did_search": {did_search},
-  "search_queries": {search_queries}
+  "sources": {sources_json}
 }}
 
 Rules:
