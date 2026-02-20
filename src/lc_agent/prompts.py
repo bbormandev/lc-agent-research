@@ -20,7 +20,7 @@ QUERY_PROMPT = """You generate web search queries.
 Today is {today}.
 
 Given the user's question, produce 1-3 search queries that would likely return authoritative and recent sources.
-Prefer official docs and reputable sources when possible.
+Aim for a diversity opinions that are all from reputable sources.
 
 Return ONLY valid JSON in this exact format:
 {{
@@ -30,7 +30,7 @@ Return ONLY valid JSON in this exact format:
 Rules:
 - 1 to 3 queries
 - queries must be short (<= 12 words each)
-- prefer official documentation, GitHub repos, reputable engineering blogs, or well-known vendors
+- prefer official documentation, reputable blogs, or well-known authors or sources
 - avoid listicles
 - prefer resources that contain sources and examples
 - no extra keys, no markdown
@@ -42,11 +42,11 @@ Question:
 EXTRACT_PROMPT = """You extract the most relevant passages from a document.
 
 Return ONLY valid JSON in this exact format:
-{
+{{
   "passages": [
-    {"quote": "...", "why": "..."}
+    {{"quote": "...", "why": "..."}}
   ]
-}
+}}
 
 Rules:
 - Extract 3 to 5 passages.

@@ -29,6 +29,7 @@ dist/
 
 # ---- Logs / runtime artifacts ----
 *.log
+runs
 
 # ---- LangChain / AI specific ----
 .langsmith/

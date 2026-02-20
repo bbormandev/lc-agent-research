@@ -1,14 +1,17 @@
+import hashlib
 import json
 import re
 from dataclasses import dataclass
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+from datetime import datetime, timezone
 
 from lc_agent.prompts import GATE_PROMPT, QUERY_PROMPT, ANSWER_PROMPT
 from lc_agent.run_context import RunContext
 from lc_agent.tools.search_tavily import search_web, SearchResult
 from lc_agent.tools.fetch import fetch_url
 from lc_agent.tools.extract import extract_passages
+from lc_agent.run_bundle import RunBundler
 
 load_dotenv()
 
@@ -58,39 +61,86 @@ def validate_citations(answer_bullets: list[str], sources: list[str]) -> None:
 			raise RuntimeError(f"Bullet cites unknown sources {bad}: {b}")
 		
 def validate_summary(summary: str) -> None:
-    if not isinstance(summary, str) or not summary.strip():
-        raise RuntimeError("Missing or empty summary")
-    if "[" in summary or "]" in summary:
-        raise RuntimeError(f"Summary must not contain citations/brackets: {summary}")
+	if not isinstance(summary, str) or not summary.strip():
+		raise RuntimeError("Missing or empty summary")
+	if "[" in summary or "]" in summary:
+		raise RuntimeError(f"Summary must not contain citations/brackets: {summary}")
+	
+def serialize_search_result(r: SearchResult) -> dict:
+    return {
+        "title": r.title,
+        "url": r.url,
+        "snippet": r.snippet,
+    }
+
+def serialize_results(results: list[SearchResult]) -> list[dict]:
+    return [serialize_search_result(r) for r in results]
+
+def url_hash(url: str) -> str:
+    return hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
 
 
 def ask_question(question: str, config: PipelineConfig, ctx: RunContext) -> dict:
+	# Set up bundler and LLM
+	bundler = RunBundler(base_dir="runs")
+	run_id = bundler.start()
 	llm = ChatOpenAI(model=config.model, temperature=config.temperature)
 
+	# Save initial data to bundler
+	meta = {
+		"run_id": run_id,
+		"started_at_utc": datetime.now(timezone.utc).isoformat(),
+		"question": question,
+		"today": ctx.today,
+		"model": config.model,
+		"config": {
+			"max_sources": config.max_sources,
+			"max_queries": config.max_queries,
+			"max_chars_per_source": config.max_chars_per_source,
+		},
+	}
+	bundler.write_json("meta.json", meta)
+
+	# Decide if we need to perform a web search
 	did_search = decide_should_search(llm, question, ctx)
+	meta["did_search"] = did_search
+	bundler.write_json("meta.json", meta)
 
 	context = ""
 	sources_list: list[str] = []
 	search_queries: list[str] = []
 
 	if did_search:
+		# Generate list of search queries
 		search_queries = generate_queries(llm, question, config.max_queries, ctx)
 		if not search_queries:
 			search_queries = [question]
+		bundler.write_json("search_queries.json", search_queries)
 
+		# Perform searches and store in buckets
 		PER_QUERY_LIMIT = max(config.max_sources, 5)
-
 		buckets: list[list[SearchResult]] = []
+		search_dump = []
 		for q in search_queries:
 			try:
-				buckets.append(search_web(q)[:PER_QUERY_LIMIT])
+				res = search_web(q)[:PER_QUERY_LIMIT]
 			except Exception:
-				buckets.append([])
+				res = []
+
+			buckets.append(res)
+			search_dump.append({
+				"query": q,
+				"results": [
+					{"title": r.title, "url": r.url, "snippet": r.snippet}
+					for r in res
+				],
+			})
+		bundler.write_json("search_results.json", search_dump)
 
 		results: list[SearchResult] = []
 		seen_urls: set[str] = set()
 
-		# round-robin pick 1 from each bucket until max_sources
+		# Round-robin pick 1 from each bucket until max_sources
 		i = 0
 		while len(results) < config.max_sources:
 			progressed = False
@@ -107,15 +157,21 @@ def ask_question(question: str, config: PipelineConfig, ctx: RunContext) -> dict
 			if not progressed:
 				break
 			i += 1
+		# results not contains a spread of search results from each query
+		bundler.write_json("selected_sources.json", serialize_results(results))
 
-
+		# Pull passages from our built out list of results
 		passage_blocks: list[str] = []
-
 		for idx, r in enumerate(results, start=1):
 			sources_list.append(f"S{idx}: {r.title} - {r.url}")
 
 			try:
 				doc = fetch_url(r.url, max_chars=config.max_chars_per_source)
+				bundler.write_json(f"fetch/{url_hash(r.url)}.json", {
+					"url": doc.url,
+					"title": doc.title,
+					"text": doc.text
+				})
 
 				passages = extract_passages(
 					llm,
@@ -124,6 +180,12 @@ def ask_question(question: str, config: PipelineConfig, ctx: RunContext) -> dict
 					url=r.url,
 					text=doc.text,
 				)
+				bundler.write_json(f"extracts/{url_hash(r.url)}.json", {
+					"source_id": f"S{idx}",
+					"title": r.title,
+					"url": r.url,
+					"passages": passages,
+				})
 
 				block_lines = [
 					f"SOURCE_ID: S{idx}",
@@ -147,6 +209,7 @@ def ask_question(question: str, config: PipelineConfig, ctx: RunContext) -> dict
 				)
 
 		context = "\n\n".join(passage_blocks)
+		bundler.write_text("context.txt", context)
 
 	prompt = ANSWER_PROMPT.format(
 		question=question,
@@ -159,7 +222,6 @@ def ask_question(question: str, config: PipelineConfig, ctx: RunContext) -> dict
 	raw = llm.invoke(prompt).content
 	data = json.loads(raw)
 
-	# Your existing guardrails
 	validate_citations(data.get("answer_bullets", []), data.get("sources", []))
 	summary = data.get("summary")
 	if summary is None:
@@ -175,6 +237,11 @@ def ask_question(question: str, config: PipelineConfig, ctx: RunContext) -> dict
 		"search_queries": search_queries,
 		"max_sources": config.max_sources,
 		"model": config.model,
+		"run_id": run_id,
+		"run_dir": str(bundler.path())
 	}
+	bundler.write_json("final.json", data)
+	meta = bundler.finish_meta(meta)
+	bundler.write_json("meta.json", meta)
 
 	return data
