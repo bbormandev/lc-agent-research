@@ -4,6 +4,12 @@ import sys
 
 from lc_agent.services.research_service import ResearchServiceConfig, ask
 from lc_agent.services.obsidian_service import publish_note
+from lc_agent.services.categorization_service import (
+    CategorizationServiceConfig,
+    categorize,
+    resolve_registry_path,
+    write_categories_artifact,
+)
 from lc_agent.infra.run_context import make_run_context
 
 
@@ -51,6 +57,51 @@ def main(argv: list[str] | None = None) -> int:
         )
         ctx = make_run_context()
         result = ask(args.question, config, ctx)
+        if not isinstance(result.get("_meta"), dict):
+            result["_meta"] = {}
+
+        categorization_meta: dict[str, object] = {"enabled": False}
+        if args.vault:
+            cat_config = CategorizationServiceConfig(model=args.model)
+            registry_path = resolve_registry_path(args.vault, cat_config)
+            if registry_path.exists():
+                try:
+                    categories = categorize(
+                        args.question,
+                        result,
+                        vault_path=args.vault,
+                        config=cat_config,
+                    )
+                    run_dir = str(result.get("_meta", {}).get("run_dir", "")).strip()
+                    if not run_dir:
+                        raise RuntimeError("Missing run_dir in result._meta")
+                    artifact_path = write_categories_artifact(run_dir, categories)
+                    categorization_meta = {
+                        "enabled": True,
+                        "artifact": "categories.json",
+                        "artifact_path": artifact_path,
+                        "registry_path": str(registry_path.resolve()),
+                    }
+                except Exception as e:
+                    categorization_meta = {
+                        "enabled": False,
+                        "skipped_reason": "categorization_failed",
+                        "error": str(e),
+                        "registry_path": str(registry_path.resolve()),
+                    }
+            else:
+                categorization_meta = {
+                    "enabled": False,
+                    "skipped_reason": "registry_not_found",
+                    "registry_path": str(registry_path),
+                }
+        else:
+            categorization_meta = {
+                "enabled": False,
+                "skipped_reason": "vault_not_provided",
+            }
+
+        result["_meta"]["categorization"] = categorization_meta
 
         if args.vault:
             publish_meta = publish_note(

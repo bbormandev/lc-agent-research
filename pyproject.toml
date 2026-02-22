@@ -8,6 +8,7 @@ dependencies = [
   "requests>=2.31",
   "beautifulsoup4>=4.12",
   "tavily-python>=0.7",
+  "PyYAML>=6.0",
 ]
 
 [build-system]

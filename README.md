@@ -10,6 +10,7 @@ The current implementation is intentionally simple and focused on the core pipel
 - Passage extraction from fetched web pages
 - Source-aware summarization with bulleted responses and citations
 - Run artifact bundling per execution (`meta.json`, `final.json`, search/fetch/extract artifacts)
+- Topic categorization artifact generation (`categories.json`) when using `--vault`
 - Optional Obsidian vault publishing to Markdown notes via `--vault`
 - Modular agent workflow built on LangChain
 - Pluggable search layer using Tavily
@@ -54,7 +55,12 @@ research ask "{question}" --max-sources 5
 
 ### Ask and Publish to Obsidian Vault
 
-When `--vault` is provided, the agent writes a Markdown note to the root of the vault and includes publish metadata in the CLI JSON output under `_meta.obsidian`.
+When `--vault` is provided, the CLI now runs:
+1. research (`final.json`)
+2. categorization (if `Index/Category Tree.md` exists in the vault)
+3. Obsidian note publish
+
+Categorization metadata is surfaced in `_meta.categorization`, and publish metadata remains under `_meta.obsidian`.
 
 ```bash
 research ask "{question}" --vault /path/to/your/obsidian-vault
@@ -63,7 +69,34 @@ research ask "{question}" --vault /path/to/your/obsidian-vault
 Generated note behavior:
 - Filename format: `<slug(question)>-<YYYY-MM-DD>.md`
 - Collision handling: appends numeric suffix (`-2`, `-3`, ...)
-- Note template: YAML frontmatter + `Summary`, `Key Points`, `Sources`, `Run Metadata`
+- Note template: YAML frontmatter + `Summary`, `Key Points`, `Sources`, optional `Links`, `Run Metadata`
+- If run `categories.json` exists, frontmatter includes `broad`, `refined`, `subrefined`, and `tags`
+
+### Category Registry in Obsidian
+
+For categorization, create this file in your vault:
+
+- `Index/Category Tree.md`
+
+Use YAML frontmatter as the source of truth:
+
+```yaml
+---
+version: 1
+broad_categories:
+  - name: technology
+    refined_categories:
+      - name: machine-learning
+        subrefined_categories: [llm-deployment, evaluation]
+canonical_tags: [privacy, open-source, cost-optimization]
+rules:
+  max_depth: 3
+  max_tags: 8
+  max_new_tags: 2
+---
+```
+
+Markdown body content below the frontmatter is ignored in v1.
 
 ## Running Tests
 

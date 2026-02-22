@@ -1,3 +1,4 @@
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -39,8 +40,31 @@ def _safe_meta_value(value: object) -> str:
     return text if text else "unknown"
 
 
+def _load_categories_from_run(result: dict) -> dict | None:
+    meta = result.get("_meta", {}) if isinstance(result.get("_meta"), dict) else {}
+    run_dir = str(meta.get("run_dir", "")).strip()
+    if not run_dir:
+        return None
+
+    categories_path = Path(run_dir) / "categories.json"
+    if not categories_path.exists():
+        return None
+
+    try:
+        data = json.loads(categories_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _wikilink(value: str) -> str:
+    text = str(value).strip()
+    return f"[[{text}]]" if text else ""
+
+
 def render_note_markdown(question: str, result: dict, today: str) -> str:
     meta = result.get("_meta", {}) if isinstance(result.get("_meta"), dict) else {}
+    categories = _load_categories_from_run(result)
     summary = str(result.get("summary", "")).strip()
     answer_bullets = result.get("answer_bullets", []) or []
     sources = result.get("sources", []) or []
@@ -57,9 +81,19 @@ def render_note_markdown(question: str, result: dict, today: str) -> str:
         f'run_id: "{run_id}"',
         f'model: "{model}"',
         f"did_search: {'true' if did_search else 'false'}",
-        "---",
-        "",
     ]
+    if categories:
+        frontmatter.append(f'broad: "{str(categories.get("broad", "")).strip()}"')
+        frontmatter.append(f'refined: "{str(categories.get("refined", "")).strip()}"')
+        subrefined = categories.get("subrefined")
+        if subrefined is None:
+            frontmatter.append("subrefined: null")
+        else:
+            frontmatter.append(f'subrefined: "{str(subrefined).strip()}"')
+        tags = categories.get("tags", []) or []
+        frontmatter.append(f"tags: {json.dumps(tags, ensure_ascii=False)}")
+
+    frontmatter.extend(["---", ""])
 
     body = [
         f"# {question}",
@@ -75,6 +109,20 @@ def render_note_markdown(question: str, result: dict, today: str) -> str:
     body.extend(["", "## Sources"])
     for source in sources:
         body.append(f"- {source}")
+
+    links = categories.get("links", {}) if categories else {}
+    entities = [str(v).strip() for v in links.get("entities", []) or [] if str(v).strip()]
+    concepts = [str(v).strip() for v in links.get("concepts", []) or [] if str(v).strip()]
+    if entities or concepts:
+        body.extend(["", "## Links"])
+        for entity in entities:
+            link = _wikilink(entity)
+            if link:
+                body.append(f"- {link}")
+        for concept in concepts:
+            link = _wikilink(concept)
+            if link:
+                body.append(f"- {link}")
 
     body.extend(
         [
