@@ -6,18 +6,18 @@ from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
 from datetime import datetime, timezone
 
-from lc_agent.prompts import GATE_PROMPT, QUERY_PROMPT, ANSWER_PROMPT
-from lc_agent.run_context import RunContext
+from lc_agent.prompts.research import GATE_PROMPT, QUERY_PROMPT, ANSWER_PROMPT
+from lc_agent.infra.run_context import RunContext
 from lc_agent.tools.search_tavily import search_web, SearchResult
 from lc_agent.tools.fetch import fetch_url
 from lc_agent.tools.extract import extract_passages
-from lc_agent.run_bundle import RunBundler
+from lc_agent.infra.run_bundler import RunBundler
 
 load_dotenv()
 
 
 @dataclass
-class PipelineConfig:
+class ResearchServiceConfig:
 	model: str = "gpt-4o-mini"
 	temperature: float = 0.0
 	max_sources: int = 5
@@ -80,7 +80,7 @@ def url_hash(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
 
 
-def ask_question(question: str, config: PipelineConfig, ctx: RunContext) -> dict:
+def ask(question: str, config: ResearchServiceConfig, ctx: RunContext) -> dict:
 	# Set up bundler and LLM
 	bundler = RunBundler(base_dir="runs")
 	run_id = bundler.start()

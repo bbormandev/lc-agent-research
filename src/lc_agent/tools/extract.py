@@ -1,6 +1,6 @@
 import json
 from langchain_openai import ChatOpenAI
-from lc_agent.prompts import EXTRACT_PROMPT
+from lc_agent.prompts.research import EXTRACT_PROMPT
 
 def extract_passages(llm: ChatOpenAI, question: str, *, title: str, url: str, text: str) -> list[dict]:
 	raw = llm.invoke(EXTRACT_PROMPT.format(

@@ -2,8 +2,8 @@ import argparse
 import json
 import sys
 
-from lc_agent.pipeline import PipelineConfig, ask_question
-from lc_agent.run_context import make_run_context
+from lc_agent.services.research_service import ResearchServiceConfig, ask
+from lc_agent.infra.run_context import make_run_context
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -38,12 +38,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "ask":
-        config = PipelineConfig(
+        config = ResearchServiceConfig(
             max_sources=args.max_sources,
             model=args.model,
         )
         ctx = make_run_context()
-        result = ask_question(args.question, config, ctx)
+        result = ask(args.question, config, ctx)
 
         print(json.dumps(result, indent=2))
         return 0
