@@ -3,6 +3,7 @@ import json
 import sys
 
 from lc_agent.services.research_service import ResearchServiceConfig, ask
+from lc_agent.services.obsidian_service import publish_note
 from lc_agent.infra.run_context import make_run_context
 
 
@@ -29,6 +30,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print raw JSON (default prints pretty JSON anyway)",
     )
+    ask.add_argument(
+        "--vault",
+        type=str,
+        default=None,
+        help="Optional path to Obsidian vault root. If provided, writes a markdown note.",
+    )
 
     return parser
 
@@ -44,6 +51,22 @@ def main(argv: list[str] | None = None) -> int:
         )
         ctx = make_run_context()
         result = ask(args.question, config, ctx)
+
+        if args.vault:
+            publish_meta = publish_note(
+                args.question,
+                result,
+                vault_path=args.vault,
+                today=ctx.today,
+            )
+            if not isinstance(result.get("_meta"), dict):
+                result["_meta"] = {}
+            result["_meta"]["obsidian"] = {
+                "enabled": True,
+                "note_path": publish_meta["note_path"],
+                "note_filename": publish_meta["note_filename"],
+                "vault_path": publish_meta["vault_path"],
+            }
 
         print(json.dumps(result, indent=2))
         return 0
