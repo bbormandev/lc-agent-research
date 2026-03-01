@@ -67,7 +67,8 @@ research ask "{question}" --vault /path/to/your/obsidian-vault
 ```
 
 Generated note behavior:
-- Filename format: `<slug(question)>-<YYYY-MM-DD>.md`
+- Output directory: `Topics/` under the provided vault path (created automatically if missing)
+- Filename format: `<slug(note_title)>-<YYYY-MM-DD>.md` (falls back to question slug if `note_title` is unavailable)
 - Collision handling: appends numeric suffix (`-2`, `-3`, ...)
 - Note template: YAML frontmatter + `Summary`, `Key Points`, `Sources`, optional `Links`, `Run Metadata`
 - If run `categories.json` exists, frontmatter includes `broad`, `refined`, `subrefined`, and `tags`

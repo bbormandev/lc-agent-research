@@ -65,6 +65,15 @@ def validate_summary(summary: str) -> None:
 		raise RuntimeError("Missing or empty summary")
 	if "[" in summary or "]" in summary:
 		raise RuntimeError(f"Summary must not contain citations/brackets: {summary}")
+
+
+def validate_note_title(note_title: object) -> str:
+	if not isinstance(note_title, str):
+		raise RuntimeError("Response missing required field: note_title")
+	cleaned = note_title.strip()
+	if not cleaned:
+		raise RuntimeError("Response note_title must be non-empty")
+	return cleaned
 	
 def serialize_search_result(r: SearchResult) -> dict:
     return {
@@ -222,6 +231,7 @@ def ask(question: str, config: ResearchServiceConfig, ctx: RunContext) -> dict:
 	raw = llm.invoke(prompt).content
 	data = json.loads(raw)
 
+	data["note_title"] = validate_note_title(data.get("note_title"))
 	validate_citations(data.get("answer_bullets", []), data.get("sources", []))
 	summary = data.get("summary")
 	if summary is None:

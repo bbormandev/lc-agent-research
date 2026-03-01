@@ -5,10 +5,11 @@ from pathlib import Path
 
 from lc_agent.services.obsidian_service import (
     build_note_filename,
+    note_title_seed,
     publish_note,
     render_note_markdown,
     resolve_note_path,
-    slugify_question,
+    slugify_for_filename,
 )
 
 
@@ -78,27 +79,39 @@ class TestObsidianService(unittest.TestCase):
 
     def test_slugify_and_filename(self) -> None:
         self.assertEqual(
-            slugify_question("Best local LLM tools?! 2026"),
+            slugify_for_filename("Best local LLM tools?! 2026"),
             "best-local-llm-tools-2026",
         )
-        self.assertEqual(slugify_question("!!!"), "note")
+        self.assertEqual(slugify_for_filename("!!!"), "note")
         self.assertEqual(
-            build_note_filename("Best local LLM tools?! 2026", "2026-02-22"),
-            "best-local-llm-tools-2026-2026-02-22.md",
+            note_title_seed(
+                "fallback question",
+                {"note_title": "Local LLM tooling for privacy-conscious teams"},
+            ),
+            "Local LLM tooling for privacy-conscious teams",
+        )
+        self.assertEqual(
+            build_note_filename(
+                "Best local LLM tools?! 2026",
+                {"note_title": "Practical local LLM tools"},
+                "2026-02-22",
+            ),
+            "practical-local-llm-tools-2026-02-22.md",
         )
 
     def test_collision_resolution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            vault = Path(tmp)
-            (vault / "topic-2026-02-22.md").write_text("one", encoding="utf-8")
-            (vault / "topic-2026-02-22-2.md").write_text("two", encoding="utf-8")
+            topics = Path(tmp)
+            (topics / "topic-2026-02-22.md").write_text("one", encoding="utf-8")
+            (topics / "topic-2026-02-22-2.md").write_text("two", encoding="utf-8")
 
-            path = resolve_note_path(vault, "topic-2026-02-22.md")
+            path = resolve_note_path(topics, "topic-2026-02-22.md")
             self.assertEqual(path.name, "topic-2026-02-22-3.md")
 
     def test_publish_note_writes_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = {
+                "note_title": "Short title",
                 "summary": "Summary",
                 "answer_bullets": ["Point [S1]"],
                 "sources": ["S1: Source - https://example.com"],
@@ -112,7 +125,7 @@ class TestObsidianService(unittest.TestCase):
             )
             note_path = Path(meta["note_path"])
             self.assertTrue(note_path.exists())
-            self.assertEqual(note_path.parent.resolve(), Path(tmp).resolve())
+            self.assertEqual(note_path.parent.resolve(), (Path(tmp) / "Topics").resolve())
             content = note_path.read_text(encoding="utf-8")
             self.assertIn("## Key Points", content)
             self.assertIn("## Sources", content)

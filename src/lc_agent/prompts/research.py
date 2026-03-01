@@ -69,12 +69,15 @@ ANSWER_PROMPT = """You are a practical research assistant.
 Return ONLY valid JSON matching this schema:
 
 {{
+  "note_title": "...",
   "summary": "...",
   "answer_bullets": ["..."],
   "sources": {sources_json}
 }}
 
 Rules:
+- note_title must be a short, descriptive title for saving this note (3-12 words).
+- note_title must not include markdown syntax, slashes, colons, or quotes.
 - summary must be 1-3 sentences (<= 450 characters total).
 - summary must be a high-level synthesis of the answer_bullets and the provided PASSAGES.
 - summary must NOT include citations, brackets, or source IDs.

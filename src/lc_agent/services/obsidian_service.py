@@ -9,25 +9,30 @@ class ObsidianServiceConfig:
     vault_path: Path
 
 
-def slugify_question(question: str) -> str:
-    slug = re.sub(r"[^a-z0-9]+", "-", question.lower()).strip("-")
+def slugify_for_filename(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
     return slug or "note"
 
 
-def build_note_filename(question: str, today: str) -> str:
-    return f"{slugify_question(question)}-{today}.md"
+def note_title_seed(question: str, result: dict) -> str:
+    candidate = str(result.get("note_title", "")).strip()
+    return candidate if candidate else question
 
 
-def resolve_note_path(vault_path: Path, filename: str) -> Path:
+def build_note_filename(question: str, result: dict, today: str) -> str:
+    return f"{slugify_for_filename(note_title_seed(question, result))}-{today}.md"
+
+
+def resolve_note_path(topics_path: Path, filename: str) -> Path:
     base = Path(filename).stem
     ext = Path(filename).suffix or ".md"
-    candidate = vault_path / f"{base}{ext}"
+    candidate = topics_path / f"{base}{ext}"
     if not candidate.exists():
         return candidate
 
     i = 2
     while True:
-        candidate = vault_path / f"{base}-{i}{ext}"
+        candidate = topics_path / f"{base}-{i}{ext}"
         if not candidate.exists():
             return candidate
         i += 1
@@ -146,8 +151,11 @@ def publish_note(question: str, result: dict, *, vault_path: str, today: str) ->
     if not vault.is_dir():
         raise ValueError(f"Vault path is not a directory: {vault}")
 
-    filename = build_note_filename(question, today)
-    note_path = resolve_note_path(vault, filename)
+    topics = vault / "Topics"
+    topics.mkdir(parents=True, exist_ok=True)
+
+    filename = build_note_filename(question, result, today)
+    note_path = resolve_note_path(topics, filename)
     markdown = render_note_markdown(question, result, today)
     note_path.write_text(markdown, encoding="utf-8")
 
