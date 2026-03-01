@@ -6,8 +6,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 
 @dataclass(frozen=True)
 class CategoryRegistryServiceConfig:
@@ -45,6 +43,8 @@ def _normalize_slug(value: object) -> str:
 
 
 def _extract_frontmatter(markdown_text: str) -> dict[str, Any]:
+    import yaml
+
     if not markdown_text.startswith("---"):
         raise ValueError("Category note is missing YAML frontmatter")
 
@@ -282,4 +282,3 @@ def load_category_tree(vault_path: str, config: CategoryRegistryServiceConfig) -
     if not isinstance(data.get("domains"), list):
         raise ValueError("Compiled category registry is missing domains list")
     return data
-

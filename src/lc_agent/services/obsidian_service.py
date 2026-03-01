@@ -3,6 +3,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from lc_agent.services.category_registry_service import (
+    CategoryRegistryServiceConfig,
+    load_category_tree,
+)
 
 @dataclass(frozen=True)
 class ObsidianServiceConfig:
@@ -67,7 +71,88 @@ def _wikilink(value: str) -> str:
     return f"[[{text}]]" if text else ""
 
 
-def render_note_markdown(question: str, result: dict, today: str) -> str:
+def _slug_to_readable(slug: str) -> str:
+    parts = [p for p in str(slug).strip().split("-") if p]
+    return " ".join(part.capitalize() for part in parts)
+
+
+def _build_category_title_maps(registry: dict) -> dict[str, dict[str, str]]:
+    domain_titles: dict[str, str] = {}
+    category_titles: dict[str, str] = {}
+    subcategory_titles: dict[str, str] = {}
+
+    for domain in registry.get("domains", []) or []:
+        domain_slug = str(domain.get("slug", "")).strip()
+        domain_title = str(domain.get("title", "")).strip()
+        if domain_slug and domain_title:
+            domain_titles[domain_slug] = domain_title
+
+        for category in domain.get("categories", []) or []:
+            category_slug = str(category.get("slug", "")).strip()
+            category_title = str(category.get("title", "")).strip()
+            if category_slug and category_title:
+                category_titles[category_slug] = category_title
+
+            for subcategory in category.get("subcategories", []) or []:
+                subcategory_slug = str(subcategory.get("slug", "")).strip()
+                subcategory_title = str(subcategory.get("title", "")).strip()
+                if subcategory_slug and subcategory_title:
+                    subcategory_titles[subcategory_slug] = subcategory_title
+
+    return {
+        "domain": domain_titles,
+        "category": category_titles,
+        "subcategory": subcategory_titles,
+    }
+
+
+def _load_category_title_maps(vault: Path) -> dict[str, dict[str, str]]:
+    try:
+        registry = load_category_tree(str(vault), CategoryRegistryServiceConfig())
+    except Exception:
+        return {"domain": {}, "category": {}, "subcategory": {}}
+    return _build_category_title_maps(registry)
+
+
+def _render_category_path_line(
+    categories: dict | None,
+    category_title_maps: dict[str, dict[str, str]] | None,
+) -> str | None:
+    if not categories:
+        return None
+
+    domain = str(categories.get("domain", "")).strip()
+    category = str(categories.get("category", "")).strip()
+    subcategory_raw = categories.get("subcategory")
+    subcategory = str(subcategory_raw).strip() if subcategory_raw is not None else ""
+
+    if not domain or not category:
+        return None
+
+    title_maps = category_title_maps or {"domain": {}, "category": {}, "subcategory": {}}
+    domain_title = title_maps.get("domain", {}).get(domain, _slug_to_readable(domain))
+    category_title = title_maps.get("category", {}).get(category, _slug_to_readable(category))
+
+    links = [_wikilink(domain_title), _wikilink(category_title)]
+    if subcategory:
+        subcategory_title = title_maps.get("subcategory", {}).get(
+            subcategory, _slug_to_readable(subcategory)
+        )
+        links.append(_wikilink(subcategory_title))
+
+    chain = [link for link in links if link]
+    if len(chain) < 2:
+        return None
+    return f"Categories: {' → '.join(chain)}"
+
+
+def render_note_markdown(
+    question: str,
+    result: dict,
+    today: str,
+    *,
+    category_title_maps: dict[str, dict[str, str]] | None = None,
+) -> str:
     meta = result.get("_meta", {}) if isinstance(result.get("_meta"), dict) else {}
     categories = _load_categories_from_run(result)
     summary = str(result.get("summary", "")).strip()
@@ -88,13 +173,13 @@ def render_note_markdown(question: str, result: dict, today: str) -> str:
         f"did_search: {'true' if did_search else 'false'}",
     ]
     if categories:
-        frontmatter.append(f'broad: "{str(categories.get("broad", "")).strip()}"')
-        frontmatter.append(f'refined: "{str(categories.get("refined", "")).strip()}"')
-        subrefined = categories.get("subrefined")
-        if subrefined is None:
-            frontmatter.append("subrefined: null")
+        frontmatter.append(f'domain: "{str(categories.get("domain", "")).strip()}"')
+        frontmatter.append(f'category: "{str(categories.get("category", "")).strip()}"')
+        subcategory = categories.get("subcategory")
+        if subcategory is None:
+            frontmatter.append("subcategory: null")
         else:
-            frontmatter.append(f'subrefined: "{str(subrefined).strip()}"')
+            frontmatter.append(f'subcategory: "{str(subcategory).strip()}"')
         tags = categories.get("tags", []) or []
         frontmatter.append(f"tags: {json.dumps(tags, ensure_ascii=False)}")
 
@@ -105,9 +190,12 @@ def render_note_markdown(question: str, result: dict, today: str) -> str:
         "",
         "## Summary",
         summary,
-        "",
-        "## Key Points",
     ]
+    category_path_line = _render_category_path_line(categories, category_title_maps)
+    if category_path_line:
+        body.extend(["", category_path_line])
+
+    body.extend(["", "## Key Points"])
     for bullet in answer_bullets:
         body.append(f"- {bullet}")
 
@@ -156,7 +244,13 @@ def publish_note(question: str, result: dict, *, vault_path: str, today: str) ->
 
     filename = build_note_filename(question, result, today)
     note_path = resolve_note_path(topics, filename)
-    markdown = render_note_markdown(question, result, today)
+    category_title_maps = _load_category_title_maps(vault)
+    markdown = render_note_markdown(
+        question,
+        result,
+        today,
+        category_title_maps=category_title_maps,
+    )
     note_path.write_text(markdown, encoding="utf-8")
 
     return {

@@ -71,7 +71,7 @@ Generated note behavior:
 - Filename format: `<slug(note_title)>-<YYYY-MM-DD>.md` (falls back to question slug if `note_title` is unavailable)
 - Collision handling: appends numeric suffix (`-2`, `-3`, ...)
 - Note template: YAML frontmatter + `Summary`, `Key Points`, `Sources`, optional `Links`, `Run Metadata`
-- If run `categories.json` exists, frontmatter includes `broad`, `refined`, `subrefined`, and `tags`
+- If run `categories.json` exists, frontmatter includes `domain`, `category`, `subcategory`, and `tags`
 
 ### Category Registry in Obsidian
 

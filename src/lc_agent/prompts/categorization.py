@@ -4,8 +4,8 @@ Return only JSON that matches the required schema.
 Rules:
 - Prefer selecting categories from the provided category tree.
 - Keep taxonomy stable and low-growth; only propose new categories when no existing fit is reasonable.
-- broad/refined must be non-empty strings.
-- subrefined may be null.
+- domain/category must be non-empty strings.
+- subcategory may be null.
 - tags must be concise, lower-case kebab-case labels.
 - Use at most 8 tags.
 - Suggest at most 2 new tags that are not in canonical_tags.
@@ -27,18 +27,18 @@ Category Registry:
 {registry_json}
 
 Output schema fields:
-- broad: string
-- refined: string
-- subrefined: string|null
+- domain: string
+- category: string
+- subcategory: string|null
 - tags: string[]
 - links: {{ entities: string[], concepts: string[] }}
 - confidence: number (0..1)
-- proposed_new_categories: {{ broad?: string[], refined?: string[], subrefined?: string[] }}
+- proposed_new_categories: {{ domain?: string[], category?: string[], subcategory?: string[] }}
 
 Selection constraints:
 - Pick from registry categories/tags when possible.
-- If no refined/subrefined category fits, choose best available path and add proposals.
-- If broad category does not fit existing broad options, still choose best current broad and log proposed broad.
+- If no category/subcategory fit, choose best available path and add proposals.
+- If domain does not fit existing domain options, still choose best current domain and log proposed domain.
 - Keep tags cross-cutting and deduplicated.
 """
 
@@ -49,9 +49,9 @@ CATEGORIZATION_JSON_SCHEMA = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "broad": {"type": "string", "minLength": 1},
-            "refined": {"type": "string", "minLength": 1},
-            "subrefined": {"type": ["string", "null"]},
+            "domain": {"type": "string", "minLength": 1},
+            "category": {"type": "string", "minLength": 1},
+            "subcategory": {"type": ["string", "null"]},
             "tags": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -71,17 +71,17 @@ CATEGORIZATION_JSON_SCHEMA = {
                 "type": "object",
                 "additionalProperties": False,
                 "properties": {
-                    "broad": {"type": "array", "items": {"type": "string"}},
-                    "refined": {"type": "array", "items": {"type": "string"}},
-                    "subrefined": {"type": "array", "items": {"type": "string"}},
+                    "domain": {"type": "array", "items": {"type": "string"}},
+                    "category": {"type": "array", "items": {"type": "string"}},
+                    "subcategory": {"type": "array", "items": {"type": "string"}},
                 },
-                "required": ["broad", "refined", "subrefined"],
+                "required": ["domain", "category", "subcategory"],
             },
         },
         "required": [
-            "broad",
-            "refined",
-            "subrefined",
+            "domain",
+            "category",
+            "subcategory",
             "tags",
             "links",
             "confidence",

@@ -53,7 +53,7 @@ Build a personal research assistant that:
   - Current order for `ask`: research (`ask`) → categorize (`categorize`) → publish (`publish_note`)
 - **Services**:
   - `ResearchService`: research + synthesis only
-  - `CategorizationService`: parse vault category registry, classify into broad/refined/subrefined, normalize tags, emit links + proposals
+  - `CategorizationService`: parse vault category registry, classify into domain/category/subcategory, normalize tags, emit links + proposals
   - `ObsidianService`: render Markdown + publish note, optionally enrich from `categories.json`
 - **Tools**: web search, fetch, extract (pure helpers)
 - **Infra**: run bundler, run context, caching
@@ -93,7 +93,7 @@ Build a personal research assistant that:
   - Write note into Obsidian vault
 - Study Index v1
   - `Index/Study Index.md`
-  - Append links under broad categories (Technology, Finance, Politics)
+  - Append links under domain categories (Technology, Finance, Politics)
 - CLI flag: `--vault /path/to/vault` to enable publishing
 
 ### Implemented in v1 (current)
@@ -126,12 +126,12 @@ Build a personal research assistant that:
 
 **Status:** ✅ Complete
 
-**Goal:** Enable broad → refined categorization for study guides.
+**Goal:** Enable domain → category → subcategory classification for study guides.
 
 ### Deliverables Implemented
 
 - `services/categorization_service.py`
-  - LLM-based categorizer (single call) for broad/refined/subrefined + tags + links + proposals
+  - LLM-based categorizer (single call) for domain/category/subcategory + tags + links + proposals
   - Strict JSON schema response format bound at the model call
   - Lightweight validation/normalization:
     - depth <= 3
@@ -150,7 +150,7 @@ Build a personal research assistant that:
   - `_meta.categorization` includes enablement, artifact path, registry path, and skipped reason when applicable
 - Obsidian writer integration:
   - consumes run `categories.json` when present
-  - frontmatter includes `broad`, `refined`, `subrefined`, and `tags`
+  - frontmatter includes `domain`, `category`, `subcategory`, and `tags`
   - note body includes optional `Links` section with `[[wikilinks]]` from entities/concepts
 - Tests:
   - new `tests/test_categorization_service.py`
@@ -161,7 +161,7 @@ Build a personal research assistant that:
 
 - ✅ Notes include frontmatter categories/tags when `categories.json` exists
 - ✅ Categories can be re-rendered from run artifacts without re-running research
-- ⏳ Study Index broad-category grouping remains deferred to later phase
+- ⏳ Study Index domain-category grouping remains deferred to later phase
 
 ---
 

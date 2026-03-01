@@ -53,9 +53,9 @@ class TestCliObsidianPublish(unittest.TestCase):
                 },
             }
             fake_categories = {
-                "broad": "technology",
-                "refined": "machine-learning",
-                "subrefined": "llm-deployment",
+                "domain": "technology",
+                "category": "machine-learning",
+                "subcategory": "llm-deployment",
                 "tags": ["privacy"],
                 "links": {"entities": ["Ollama"], "concepts": ["local-inference"]},
                 "confidence": 0.77,

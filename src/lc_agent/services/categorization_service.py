@@ -64,46 +64,46 @@ def _normalize_nonempty_strings(values: list[Any]) -> list[str]:
 
 
 def _registry_sets(registry: dict[str, Any]) -> tuple[set[str], set[str], set[str], set[str]]:
-    broad_set: set[str] = set()
-    refined_set: set[str] = set()
-    subrefined_set: set[str] = set()
+    domain_set: set[str] = set()
+    category_set: set[str] = set()
+    subcategory_set: set[str] = set()
 
-    for broad in registry.get("domains", []):
-        broad_name = normalize_tag(str((broad or {}).get("slug", "")))
-        if broad_name:
-            broad_set.add(broad_name)
+    for domain in registry.get("domains", []):
+        domain_name = normalize_tag(str((domain or {}).get("slug", "")))
+        if domain_name:
+            domain_set.add(domain_name)
 
-        for refined in (broad or {}).get("categories", []) or []:
-            refined_name = normalize_tag(str((refined or {}).get("slug", "")))
-            if refined_name:
-                refined_set.add(refined_name)
+        for category in (domain or {}).get("categories", []) or []:
+            category_name = normalize_tag(str((category or {}).get("slug", "")))
+            if category_name:
+                category_set.add(category_name)
 
-            for sub in (refined or {}).get("subcategories", []) or []:
+            for sub in (category or {}).get("subcategories", []) or []:
                 sub_name = normalize_tag(str((sub or {}).get("slug", "")))
                 if sub_name:
-                    subrefined_set.add(sub_name)
+                    subcategory_set.add(sub_name)
 
     canonical_tags = {
         normalize_tag(str(tag))
         for tag in (registry.get("canonical_tags", []) or [])
         if normalize_tag(str(tag))
     }
-    return broad_set, refined_set, subrefined_set, canonical_tags
+    return domain_set, category_set, subcategory_set, canonical_tags
 
 
 def validate_and_normalize(result: dict[str, Any], registry: dict[str, Any], config: CategorizationServiceConfig) -> dict[str, Any]:
-    broad = normalize_tag(str(result.get("broad", "")))
-    refined = normalize_tag(str(result.get("refined", "")))
-    sub_raw = result.get("subrefined")
-    subrefined = None
+    domain = normalize_tag(str(result.get("domain", "")))
+    category = normalize_tag(str(result.get("category", "")))
+    sub_raw = result.get("subcategory")
+    subcategory = None
     if sub_raw is not None:
         sub_text = normalize_tag(str(sub_raw))
-        subrefined = sub_text if sub_text else None
+        subcategory = sub_text if sub_text else None
 
-    if not broad:
-        raise ValueError("Categorization output broad must be non-empty")
-    if not refined:
-        raise ValueError("Categorization output refined must be non-empty")
+    if not domain:
+        raise ValueError("Categorization output domain must be non-empty")
+    if not category:
+        raise ValueError("Categorization output category must be non-empty")
 
     confidence = result.get("confidence")
     if not isinstance(confidence, (int, float)):
@@ -122,7 +122,7 @@ def validate_and_normalize(result: dict[str, Any], registry: dict[str, Any], con
         if nt and nt not in normalized_tags:
             normalized_tags.append(nt)
 
-    broad_set, _, _, canonical_tags = _registry_sets(registry)
+    domain_set, _, _, canonical_tags = _registry_sets(registry)
 
     canonical_selected = [t for t in normalized_tags if t in canonical_tags]
     novel_selected = [t for t in normalized_tags if t not in canonical_tags]
@@ -135,15 +135,16 @@ def validate_and_normalize(result: dict[str, Any], registry: dict[str, Any], con
 
     proposals_in = result.get("proposed_new_categories", {}) or {}
     proposed = {
-        "broad": [normalize_tag(s) for s in _normalize_nonempty_strings(proposals_in.get("broad", []) or [])],
-        "refined": [normalize_tag(s) for s in _normalize_nonempty_strings(proposals_in.get("refined", []) or [])],
-        "subrefined": [normalize_tag(s) for s in _normalize_nonempty_strings(proposals_in.get("subrefined", []) or [])],
+        "domain": [normalize_tag(s) for s in _normalize_nonempty_strings(proposals_in.get("domain", []) or [])],
+        "category": [normalize_tag(s) for s in _normalize_nonempty_strings(proposals_in.get("category", []) or [])],
+        "subcategory": [
+            normalize_tag(s)
+            for s in _normalize_nonempty_strings(proposals_in.get("subcategory", []) or [])
+        ],
     }
 
-    # Broad categories are fixed for adoption; if model selected a novel broad, keep selection
-    # but ensure it is explicitly logged as a proposal.
-    if broad not in broad_set and broad not in proposed["broad"]:
-        proposed["broad"].append(broad)
+    if domain not in domain_set and domain not in proposed["domain"]:
+        proposed["domain"].append(domain)
 
     cleaned_proposed = {
         key: value
@@ -152,9 +153,9 @@ def validate_and_normalize(result: dict[str, Any], registry: dict[str, Any], con
     }
 
     return {
-        "broad": broad,
-        "refined": refined,
-        "subrefined": subrefined,
+        "domain": domain,
+        "category": category,
+        "subcategory": subcategory,
         "tags": tags,
         "links": {
             "entities": entities,

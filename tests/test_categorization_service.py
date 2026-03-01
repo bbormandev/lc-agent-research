@@ -60,9 +60,9 @@ class TestCategorizationService(unittest.TestCase):
             _make_registry(vault)
 
             llm_response = {
-                "broad": "technology",
-                "refined": "machine-learning",
-                "subrefined": "llm-deployment",
+                "domain": "technology",
+                "category": "machine-learning",
+                "subcategory": "llm-deployment",
                 "tags": ["privacy", "open-source"],
                 "links": {"entities": ["Ollama"], "concepts": ["local inference"]},
                 "confidence": 0.82,
@@ -86,25 +86,25 @@ class TestCategorizationService(unittest.TestCase):
                     config=CategorizationServiceConfig(),
                 )
 
-            self.assertEqual(out["broad"], "technology")
-            self.assertEqual(out["refined"], "machine-learning")
-            self.assertEqual(out["subrefined"], "llm-deployment")
+            self.assertEqual(out["domain"], "technology")
+            self.assertEqual(out["category"], "machine-learning")
+            self.assertEqual(out["subcategory"], "llm-deployment")
             self.assertEqual(out["tags"], ["privacy", "open-source"])
             self.assertEqual(out["proposed_new_categories"], {})
 
-    def test_proposes_new_refined_when_none_fit(self) -> None:
+    def test_proposes_new_category_when_none_fit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             vault = Path(tmp)
             _make_registry(vault)
 
             llm_response = {
-                "broad": "technology",
-                "refined": "agent-orchestration",
-                "subrefined": None,
+                "domain": "technology",
+                "category": "agent-orchestration",
+                "subcategory": None,
                 "tags": ["open-source"],
                 "links": {"entities": [], "concepts": ["multi-agent systems"]},
                 "confidence": 0.66,
-                "proposed_new_categories": {"refined": ["agent-orchestration"]},
+                "proposed_new_categories": {"category": ["agent-orchestration"]},
             }
 
             mock_bound = MagicMock()
@@ -124,10 +124,10 @@ class TestCategorizationService(unittest.TestCase):
                     config=CategorizationServiceConfig(),
                 )
 
-            self.assertEqual(out["broad"], "technology")
-            self.assertEqual(out["refined"], "agent-orchestration")
-            self.assertIn("refined", out["proposed_new_categories"])
-            self.assertEqual(out["proposed_new_categories"]["refined"], ["agent-orchestration"])
+            self.assertEqual(out["domain"], "technology")
+            self.assertEqual(out["category"], "agent-orchestration")
+            self.assertIn("category", out["proposed_new_categories"])
+            self.assertEqual(out["proposed_new_categories"]["category"], ["agent-orchestration"])
 
     def test_normalizes_tags_and_enforces_caps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -135,9 +135,9 @@ class TestCategorizationService(unittest.TestCase):
             _make_registry(vault)
 
             llm_response = {
-                "broad": "Technology",
-                "refined": "Machine Learning",
-                "subrefined": "",
+                "domain": "Technology",
+                "category": "Machine Learning",
+                "subcategory": "",
                 "tags": [
                     "Privacy",
                     "Open Source",
@@ -172,9 +172,9 @@ class TestCategorizationService(unittest.TestCase):
                     config=CategorizationServiceConfig(max_tags=8, max_new_tags=2),
                 )
 
-            self.assertEqual(out["broad"], "technology")
-            self.assertEqual(out["refined"], "machine-learning")
-            self.assertIsNone(out["subrefined"])
+            self.assertEqual(out["domain"], "technology")
+            self.assertEqual(out["category"], "machine-learning")
+            self.assertIsNone(out["subcategory"])
             self.assertLessEqual(len(out["tags"]), 8)
             for tag in out["tags"]:
                 self.assertEqual(tag, normalize_tag(tag))
