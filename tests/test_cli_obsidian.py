@@ -38,13 +38,8 @@ class TestCliObsidianPublish(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             vault = Path(tmp) / "vault"
             run_dir = Path(tmp) / "runs" / "2026-02-22" / "run_1"
-            index_dir = vault / "Index"
-            index_dir.mkdir(parents=True, exist_ok=True)
+            vault.mkdir(parents=True, exist_ok=True)
             run_dir.mkdir(parents=True, exist_ok=True)
-            (index_dir / "Category Tree.md").write_text(
-                "---\nversion: 1\nbroad_categories: []\ncanonical_tags: []\n---\n",
-                encoding="utf-8",
-            )
 
             fake_result = {
                 "summary": "Summary",
@@ -70,7 +65,16 @@ class TestCliObsidianPublish(unittest.TestCase):
             calls: list[str] = []
             with patch("lc_agent.cli.make_run_context", return_value=RunContext(today="2026-02-22", current_year=2026)), patch(
                 "lc_agent.cli.ask", return_value=fake_result
-            ) as ask_mock, patch("lc_agent.cli.categorize", return_value=fake_categories) as categorize_mock, patch(
+            ) as ask_mock, patch(
+                "lc_agent.cli.ensure_category_registry_fresh",
+                return_value={
+                    "registry": {},
+                    "registry_path": str(vault / "Index" / "category_tree.json"),
+                    "meta_path": str(vault / "Index" / "category_tree.meta.json"),
+                    "rebuilt": False,
+                    "stale_reason": None,
+                },
+            ) as ensure_mock, patch("lc_agent.cli.categorize", return_value=fake_categories) as categorize_mock, patch(
                 "lc_agent.cli.publish_note",
                 side_effect=lambda *args, **kwargs: calls.append("publish") or {
                     "note_path": str(vault / "note.md"),
@@ -93,10 +97,11 @@ class TestCliObsidianPublish(unittest.TestCase):
             self.assertEqual(Path(obsidian["vault_path"]).resolve(), vault.resolve())
             self.assertEqual(parsed["_meta"]["categorization"]["enabled"], True)
             self.assertTrue((run_dir / "categories.json").exists())
+            ensure_mock.assert_called_once()
             categorize_mock.assert_called_once()
             publish_mock.assert_called_once()
 
-    def test_cli_with_vault_missing_registry_skips_categorization(self) -> None:
+    def test_cli_with_vault_registry_refresh_failure_skips_categorization(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             vault = Path(tmp) / "vault"
             run_dir = Path(tmp) / "runs" / "2026-02-22" / "run_1"
@@ -115,6 +120,9 @@ class TestCliObsidianPublish(unittest.TestCase):
             }
             with patch("lc_agent.cli.make_run_context", return_value=RunContext(today="2026-02-22", current_year=2026)), patch(
                 "lc_agent.cli.ask", return_value=fake_result
+            ), patch(
+                "lc_agent.cli.ensure_category_registry_fresh",
+                side_effect=RuntimeError("bad registry"),
             ), patch("lc_agent.cli.publish_note", return_value={
                 "note_path": str(vault / "note.md"),
                 "note_filename": "note.md",
@@ -128,7 +136,7 @@ class TestCliObsidianPublish(unittest.TestCase):
             categorize_mock.assert_not_called()
             parsed = json.loads(out.getvalue())
             self.assertEqual(parsed["_meta"]["categorization"]["enabled"], False)
-            self.assertEqual(parsed["_meta"]["categorization"]["skipped_reason"], "registry_not_found")
+            self.assertEqual(parsed["_meta"]["categorization"]["skipped_reason"], "registry_refresh_failed")
 
 
 if __name__ == "__main__":

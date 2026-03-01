@@ -7,8 +7,11 @@ from lc_agent.services.obsidian_service import publish_note
 from lc_agent.services.categorization_service import (
     CategorizationServiceConfig,
     categorize,
-    resolve_registry_path,
     write_categories_artifact,
+)
+from lc_agent.services.category_registry_service import (
+    CategoryRegistryServiceConfig,
+    ensure_category_registry_fresh,
 )
 from lc_agent.infra.run_context import make_run_context
 
@@ -63,8 +66,23 @@ def main(argv: list[str] | None = None) -> int:
         categorization_meta: dict[str, object] = {"enabled": False}
         if args.vault:
             cat_config = CategorizationServiceConfig(model=args.model)
-            registry_path = resolve_registry_path(args.vault, cat_config)
-            if registry_path.exists():
+            registry_config = CategoryRegistryServiceConfig(
+                max_tags=cat_config.max_tags,
+                max_new_tags=cat_config.max_new_tags,
+            )
+            registry_state: dict[str, object]
+            try:
+                registry_state = ensure_category_registry_fresh(args.vault, registry_config)
+            except Exception as e:
+                registry_state = {
+                    "registry_path": "",
+                    "meta_path": "",
+                    "rebuilt": False,
+                    "stale_reason": "registry_refresh_failed",
+                    "error": str(e),
+                }
+
+            if "error" not in registry_state:
                 try:
                     categories = categorize(
                         args.question,
@@ -80,20 +98,30 @@ def main(argv: list[str] | None = None) -> int:
                         "enabled": True,
                         "artifact": "categories.json",
                         "artifact_path": artifact_path,
-                        "registry_path": str(registry_path.resolve()),
+                        "registry_path": str(registry_state.get("registry_path", "")),
+                        "registry_meta_path": str(registry_state.get("meta_path", "")),
+                        "registry_rebuilt": bool(registry_state.get("rebuilt", False)),
+                        "registry_stale_reason": registry_state.get("stale_reason"),
                     }
                 except Exception as e:
                     categorization_meta = {
                         "enabled": False,
                         "skipped_reason": "categorization_failed",
                         "error": str(e),
-                        "registry_path": str(registry_path.resolve()),
+                        "registry_path": str(registry_state.get("registry_path", "")),
+                        "registry_meta_path": str(registry_state.get("meta_path", "")),
+                        "registry_rebuilt": bool(registry_state.get("rebuilt", False)),
+                        "registry_stale_reason": registry_state.get("stale_reason"),
                     }
             else:
                 categorization_meta = {
                     "enabled": False,
-                    "skipped_reason": "registry_not_found",
-                    "registry_path": str(registry_path),
+                    "skipped_reason": "registry_refresh_failed",
+                    "registry_path": str(registry_state.get("registry_path", "")),
+                    "registry_meta_path": str(registry_state.get("meta_path", "")),
+                    "registry_rebuilt": bool(registry_state.get("rebuilt", False)),
+                    "registry_stale_reason": registry_state.get("stale_reason"),
+                    "error": str(registry_state.get("error", "")),
                 }
         else:
             categorization_meta = {

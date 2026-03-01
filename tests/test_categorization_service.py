@@ -12,28 +12,45 @@ from lc_agent.services.categorization_service import (
 
 
 def _make_registry(vault: Path) -> None:
-    registry = """---
-version: 1
-broad_categories:
-  - name: technology
-    refined_categories:
-      - name: machine-learning
-        subrefined_categories: [llm-deployment, evaluation]
-  - name: finance
-    refined_categories:
-      - name: markets
-        subrefined_categories: [macro]
-canonical_tags: [privacy, open-source, cost-optimization]
-rules:
-  max_depth: 3
-  max_tags: 8
-  max_new_tags: 2
----
-# Category Tree
-"""
+    registry = {
+        "version": 1,
+        "generated_at": "2026-03-01T00:00:00+00:00",
+        "domains": [
+            {
+                "slug": "technology",
+                "title": "Technology",
+                "categories": [
+                    {
+                        "slug": "machine-learning",
+                        "title": "Machine Learning",
+                        "subcategories": [
+                            {"slug": "llm-deployment", "title": "LLM Deployment"},
+                            {"slug": "evaluation", "title": "Evaluation"},
+                        ],
+                    }
+                ],
+            },
+            {
+                "slug": "finance",
+                "title": "Finance",
+                "categories": [
+                    {
+                        "slug": "markets",
+                        "title": "Markets",
+                        "subcategories": [{"slug": "macro", "title": "Macro"}],
+                    }
+                ],
+            },
+        ],
+        "canonical_tags": ["privacy", "open-source", "cost-optimization"],
+        "rules": {"max_depth": 3, "max_tags": 8, "max_new_tags": 2},
+    }
     index_dir = vault / "Index"
     index_dir.mkdir(parents=True, exist_ok=True)
-    (index_dir / "Category Tree.md").write_text(registry, encoding="utf-8")
+    (index_dir / "category_tree.json").write_text(
+        json.dumps(registry, indent=2),
+        encoding="utf-8",
+    )
 
 
 class TestCategorizationService(unittest.TestCase):

@@ -103,16 +103,30 @@ Markdown body content below the frontmatter is ignored in v1.
 
 This project currently uses Python's built-in `unittest` test runner.
 
+Recommended setup (ensures dependencies are installed in a local venv):
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+```
+
 Run all tests:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m unittest discover -s tests -p 'test_*.py'
+PYTHONPATH=src python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
 Run a single test module:
 
 ```bash
-PYTHONPATH=src .venv/bin/python -m unittest tests/test_obsidian_service.py
+PYTHONPATH=src python -m unittest tests.test_obsidian_service -v
+```
+
+Run a single test case:
+
+```bash
+PYTHONPATH=src python -m unittest tests.test_cli_obsidian.TestCliObsidianPublish.test_cli_with_vault_orders_ask_categorize_publish -v
 ```
 
 ## Notes

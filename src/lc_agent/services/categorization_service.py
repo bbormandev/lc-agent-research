@@ -4,9 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
 from langchain_openai import ChatOpenAI
 
+from lc_agent.services.category_registry_service import (
+    CategoryRegistryServiceConfig,
+    load_category_tree,
+    resolve_registry_path as resolve_compiled_registry_path,
+)
 from lc_agent.prompts.categorization import (
     CATEGORIZATION_JSON_SCHEMA,
     CATEGORIZATION_SYSTEM_PROMPT,
@@ -18,43 +22,26 @@ from lc_agent.prompts.categorization import (
 class CategorizationServiceConfig:
     model: str = "gpt-4o-mini"
     temperature: float = 0.0
-    registry_rel_path: str = "Index/Category Tree.md"
     max_tags: int = 8
     max_new_tags: int = 2
 
 
-def resolve_registry_path(vault_path: str, config: CategorizationServiceConfig) -> Path:
-    return Path(vault_path).expanduser() / config.registry_rel_path
+def resolve_registry_path(vault_path: str, config: CategorizationServiceConfig):
+    registry_config = CategoryRegistryServiceConfig(
+        max_tags=config.max_tags,
+        max_new_tags=config.max_new_tags,
+    )
+    return resolve_compiled_registry_path(vault_path, registry_config)
 
 
-def _extract_frontmatter(markdown_text: str) -> dict[str, Any]:
-    if not markdown_text.startswith("---"):
-        raise ValueError("Category registry markdown is missing YAML frontmatter")
-
-    match = re.match(r"^---\s*\n(.*?)\n---\s*(?:\n|$)", markdown_text, flags=re.DOTALL)
-    if not match:
-        raise ValueError("Unable to parse YAML frontmatter from category registry markdown")
-
-    data = yaml.safe_load(match.group(1))
-    if not isinstance(data, dict):
-        raise ValueError("Category registry frontmatter must be a mapping/object")
-    return data
-
-
-def load_registry_from_markdown(vault_path: str, config: CategorizationServiceConfig) -> tuple[dict[str, Any], str]:
-    registry_path = resolve_registry_path(vault_path, config)
-    if not registry_path.exists():
-        raise FileNotFoundError(f"Category registry markdown not found: {registry_path}")
-
-    markdown_text = registry_path.read_text(encoding="utf-8")
-    registry = _extract_frontmatter(markdown_text)
-
-    if not isinstance(registry.get("broad_categories"), list):
-        raise ValueError("Registry frontmatter missing broad_categories list")
-    if not isinstance(registry.get("canonical_tags", []), list):
-        raise ValueError("Registry frontmatter canonical_tags must be a list")
-
-    return registry, str(registry_path.resolve())
+def load_registry_from_json(vault_path: str, config: CategorizationServiceConfig) -> tuple[dict[str, Any], str]:
+    registry_config = CategoryRegistryServiceConfig(
+        max_tags=config.max_tags,
+        max_new_tags=config.max_new_tags,
+    )
+    registry = load_category_tree(vault_path, registry_config)
+    path = resolve_compiled_registry_path(vault_path, registry_config)
+    return registry, str(path.resolve())
 
 
 def normalize_tag(tag: str) -> str:
@@ -81,18 +68,18 @@ def _registry_sets(registry: dict[str, Any]) -> tuple[set[str], set[str], set[st
     refined_set: set[str] = set()
     subrefined_set: set[str] = set()
 
-    for broad in registry.get("broad_categories", []):
-        broad_name = normalize_tag(str((broad or {}).get("name", "")))
+    for broad in registry.get("domains", []):
+        broad_name = normalize_tag(str((broad or {}).get("slug", "")))
         if broad_name:
             broad_set.add(broad_name)
 
-        for refined in (broad or {}).get("refined_categories", []) or []:
-            refined_name = normalize_tag(str((refined or {}).get("name", "")))
+        for refined in (broad or {}).get("categories", []) or []:
+            refined_name = normalize_tag(str((refined or {}).get("slug", "")))
             if refined_name:
                 refined_set.add(refined_name)
 
-            for sub in (refined or {}).get("subrefined_categories", []) or []:
-                sub_name = normalize_tag(str(sub))
+            for sub in (refined or {}).get("subcategories", []) or []:
+                sub_name = normalize_tag(str((sub or {}).get("slug", "")))
                 if sub_name:
                     subrefined_set.add(sub_name)
 
@@ -185,7 +172,7 @@ def categorize(
     vault_path: str,
     config: CategorizationServiceConfig,
 ) -> dict[str, Any]:
-    registry, _ = load_registry_from_markdown(vault_path, config)
+    registry, _ = load_registry_from_json(vault_path, config)
 
     llm = ChatOpenAI(model=config.model, temperature=config.temperature)
     llm = llm.bind(
