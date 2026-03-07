@@ -10,8 +10,9 @@ The current implementation is intentionally simple and focused on the core pipel
 - Passage extraction from fetched web pages
 - Source-aware summarization with bulleted responses and citations
 - Run artifact bundling per execution (`meta.json`, `final.json`, search/fetch/extract artifacts)
+- Complex-topic decomposition (`decomposition.json`, `topic_research.json`, `subtopics/<S#>/...` artifacts)
 - Topic categorization artifact generation (`categories.json`) when using `--vault`
-- Optional Obsidian vault publishing to Markdown notes via `--vault`
+- Optional Obsidian vault publishing to Markdown notes via `--vault` (single note or hub+subtopic notes)
 - Modular agent workflow built on LangChain
 - Pluggable search layer using Tavily
 - HTML parsing and content extraction via Beautiful Soup
@@ -57,6 +58,8 @@ research ask "{question}" --max-sources 5
 
 When `--vault` is provided, the CLI now runs:
 1. research (`final.json`)
+   - includes complexity classification
+   - for complex questions, generates decomposition + subtopic research outputs
 2. categorization (if `Index/Category Tree.md` exists in the vault)
 3. Obsidian note publish
 
@@ -68,9 +71,14 @@ research ask "{question}" --vault /path/to/your/obsidian-vault
 
 Generated note behavior:
 - Output directory: `Topics/` under the provided vault path (created automatically if missing)
-- Filename format: `<slug(note_title)>-<YYYY-MM-DD>.md` (falls back to question slug if `note_title` is unavailable)
+- Non-decomposed output filename format: `<slug(note_title)>-<YYYY-MM-DD>.md` (falls back to question slug if `note_title` is unavailable)
+- Decomposed output writes:
+  - one hub note (`<note_title>.md` when available)
+  - one subtopic note per decomposition item (`<hub> - <subtopic>.md`)
 - Collision handling: appends numeric suffix (`-2`, `-3`, ...)
-- Note template: YAML frontmatter + `Summary`, `Key Points`, `Sources`, optional `Links`, `Run Metadata`
+- Hub note template: YAML frontmatter + `Core Topics`, `Overview`, `Key Points`, `Sources`
+- Subtopic note template: `Summary`, `Key Points`, `Sources`, `Related` backlink to hub
+- Non-decomposed note template: YAML frontmatter + `Summary`, `Key Points`, `Sources`, optional `Links`, `Run Metadata`
 - If run `categories.json` exists, frontmatter includes `domain`, `category`, `subcategory`, and `tags`
 
 ### Category Registry in Obsidian

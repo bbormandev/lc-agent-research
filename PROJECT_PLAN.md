@@ -12,9 +12,9 @@ The goal is to balance **motivating, user-visible progress** with **just enough 
 
 ---
 
-## Current Status Snapshot (as of 2026-02-22)
+## Current Status Snapshot (as of 2026-03-07)
 
-- **Overall status:** Phase 0 complete, Phase 1 complete, Phase 2 complete.
+- **Overall status:** Phase 0 complete, Phase 1 complete, Phase 2 complete, Phase 3 complete.
 - **Completed recently:**
   - Added Obsidian publishing service at `services/obsidian_service.py`
   - Added CLI flag: `research ask "..." --vault /path/to/vault`
@@ -29,6 +29,16 @@ The goal is to balance **motivating, user-visible progress** with **just enough 
   - Updated Obsidian note rendering to consume `categories.json` (frontmatter categories/tags + optional wikilink Links section)
   - Added tests for categorization service + updated CLI/Obsidian tests
   - Updated `README.md` with category registry format and categorization flow
+  - Implemented `services/decomposition_service.py` with strict schema validation and subtopic note-title generation
+  - Added complexity classification in `ResearchService` (`is_complex`, `reason`) using decomposition prompt schema
+  - Added complex-topic orchestration in `ResearchService`:
+    - writes `decomposition.json`
+    - researches each decomposed subtopic once (`subtopics/<S#>/...` artifacts + `subtopics/<S#>/final.json`)
+    - writes `topic_research.json` and exposes `topic_research` in final output
+  - Updated Obsidian publish flow to topic mode when `topic_research` is present:
+    - writes a hub note with `## Core Topics` wikilinks
+    - writes one note per subtopic with backlink to the hub
+  - Added/expanded tests in `tests/test_obsidian_service.py` for hub/subtopic note publishing and skip-existing behavior
 - **Current gap to close indexing roadmap:** Study Index writing (`Index/Study Index.md`) remains deferred.
 
 ---
@@ -52,9 +62,9 @@ Build a personal research assistant that:
 - **Controller (CLI)**: Orchestrates the workflow based on user input
   - Current order for `ask`: research (`ask`) → categorize (`categorize`) → publish (`publish_note`)
 - **Services**:
-  - `ResearchService`: research + synthesis only
+  - `ResearchService`: complexity classification, optional decomposition + subtopic research, and synthesis
   - `CategorizationService`: parse vault category registry, classify into domain/category/subcategory, normalize tags, emit links + proposals
-  - `ObsidianService`: render Markdown + publish note, optionally enrich from `categories.json`
+  - `ObsidianService`: render Markdown + publish note; when `topic_research` exists, publish hub + subtopic note set
 - **Tools**: web search, fetch, extract (pure helpers)
 - **Infra**: run bundler, run context, caching
 - **Prompts**: centralized prompt definitions
@@ -167,22 +177,34 @@ Build a personal research assistant that:
 
 ## Phase 3: Topic Decomposition v1 (Fun, Smarter Research)
 
-**Status:** Not Started
+**Status:** ✅ Complete
 
 **Goal:** Break complex questions into subtopics.
 
-### Deliverables
+### Deliverables Implemented
 
 - `prompts/decomposition.py`
-- Decomposition step in `ResearchService`
-  - Generate subquestions
-  - Research each subquestion once
-- Final note includes subtopic links
+  - complexity classifier prompt/schema (`is_complex`, `reason`)
+  - decomposition prompt/schema (`strategy`, `parent_topic`, 4-7 subtopics)
+- `services/decomposition_service.py`
+  - strict validation and normalization of decomposition outputs
+  - deterministic subtopic IDs (`S1...Sn`) and generated subtopic note titles
+- `ResearchService` decomposition orchestration
+  - classifies complexity before normal topic research
+  - runs decomposition only when `is_complex=true`
+  - researches each subtopic once (forced search path)
+  - persists `decomposition.json`, `topic_research.json`, and subtopic run artifacts
+  - emits decomposition metadata in final JSON (`decomposition`, `topic_research`, `_meta.subtopics_researched`)
+- Obsidian publishing integration
+  - topic mode auto-enabled when `topic_research` is present
+  - hub note includes `## Core Topics` wikilinks to subtopic notes
+  - subtopic notes include `## Related` backlink to hub note
 
-### Definition of Done
+### Definition of Done Status
 
-- Complex questions result in multiple subtopic sections
-- Obsidian notes link to subtopic notes (or sections)
+- ✅ Complex questions can produce decomposed multi-note research outputs
+- ✅ Obsidian notes link hub ↔ subtopic notes via wikilinks
+- ✅ Subtopic artifacts are persisted per run for traceability/re-rendering
 
 ---
 
