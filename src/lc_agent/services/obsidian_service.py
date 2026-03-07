@@ -2,6 +2,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from lc_agent.services.category_registry_service import (
     CategoryRegistryServiceConfig,
@@ -40,6 +41,54 @@ def resolve_note_path(topics_path: Path, filename: str) -> Path:
         if not candidate.exists():
             return candidate
         i += 1
+
+
+def _sanitize_note_title(title: str) -> str:
+    cleaned = str(title).strip()
+    cleaned = cleaned.replace("/", "-").replace("\\", "-")
+    cleaned = cleaned.replace(":", " ").replace('"', "").replace("'", "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or "Untitled"
+
+
+def _note_path_for_title(topics_path: Path, title: str) -> Path:
+    safe_title = _sanitize_note_title(title)
+    return topics_path / f"{safe_title}.md"
+
+
+def _validate_vault(vault_path: str) -> tuple[Path, Path]:
+    config = ObsidianServiceConfig(vault_path=Path(vault_path).expanduser())
+    vault = config.vault_path
+    if not vault.exists():
+        raise ValueError(f"Vault path does not exist: {vault}")
+    if not vault.is_dir():
+        raise ValueError(f"Vault path is not a directory: {vault}")
+
+    topics = vault / "Topics"
+    topics.mkdir(parents=True, exist_ok=True)
+    return vault, topics
+
+
+def _extract_hub_title(question: str, topic_result: dict) -> str:
+    candidate = str(topic_result.get("note_title", "")).strip()
+    if candidate:
+        return _sanitize_note_title(candidate)
+    return _sanitize_note_title(question)
+
+
+def _extract_subtopic_title(subtopic_payload: dict[str, Any], hub_title: str) -> str:
+    subtopic = subtopic_payload.get("subtopic", {}) if isinstance(subtopic_payload, dict) else {}
+    note_title = str((subtopic or {}).get("note_title", "")).strip()
+    title = str((subtopic or {}).get("title", "")).strip()
+
+    if note_title:
+        if " - " in note_title:
+            return _sanitize_note_title(note_title)
+        if hub_title:
+            return _sanitize_note_title(f"{hub_title} - {note_title}")
+    if title:
+        return _sanitize_note_title(f"{hub_title} - {title}")
+    return _sanitize_note_title(f"{hub_title} - Subtopic")
 
 
 def _safe_meta_value(value: object) -> str:
@@ -231,16 +280,205 @@ def render_note_markdown(
     return "\n".join(frontmatter + body)
 
 
-def publish_note(question: str, result: dict, *, vault_path: str, today: str) -> dict:
-    config = ObsidianServiceConfig(vault_path=Path(vault_path).expanduser())
-    vault = config.vault_path
-    if not vault.exists():
-        raise ValueError(f"Vault path does not exist: {vault}")
-    if not vault.is_dir():
-        raise ValueError(f"Vault path is not a directory: {vault}")
+def render_hub_note_markdown(
+    hub_title: str,
+    topic_result: dict[str, Any],
+    subtopic_titles: list[str],
+    today: str,
+    *,
+    category_title_maps: dict[str, dict[str, str]] | None = None,
+) -> str:
+    meta = topic_result.get("_meta", {}) if isinstance(topic_result.get("_meta"), dict) else {}
+    categories = _load_categories_from_run(topic_result)
+    summary = str(topic_result.get("summary", "")).strip() or "No overview available."
+    key_points = topic_result.get("answer_bullets", []) or []
+    sources = topic_result.get("sources", []) or []
+    run_id = _safe_meta_value(meta.get("run_id"))
+    model = _safe_meta_value(meta.get("model"))
+    did_search = bool(meta.get("did_search", False))
 
-    topics = vault / "Topics"
-    topics.mkdir(parents=True, exist_ok=True)
+    frontmatter = [
+        "---",
+        f'title: "{hub_title.replace(chr(34), chr(39))}"',
+        f"created: {today}",
+        f'run_id: "{run_id}"',
+        f'model: "{model}"',
+        f"did_search: {'true' if did_search else 'false'}",
+    ]
+    if categories:
+        frontmatter.append(f'domain: "{str(categories.get("domain", "")).strip()}"')
+        frontmatter.append(f'category: "{str(categories.get("category", "")).strip()}"')
+        subcategory = categories.get("subcategory")
+        if subcategory is None:
+            frontmatter.append("subcategory: null")
+        else:
+            frontmatter.append(f'subcategory: "{str(subcategory).strip()}"')
+        tags = categories.get("tags", []) or []
+        frontmatter.append(f"tags: {json.dumps(tags, ensure_ascii=False)}")
+    frontmatter.extend(["---", ""])
+
+    lines = [
+        f"# {hub_title}",
+        "",
+        "## Core Topics",
+    ]
+    for title in subtopic_titles:
+        lines.append(f"- [[{title}]]")
+
+    lines.extend(["", "## Overview", summary])
+    category_path_line = _render_category_path_line(categories, category_title_maps)
+    if category_path_line:
+        lines.extend(["", category_path_line])
+    lines.extend(["", "## Key Points"])
+
+    for bullet in key_points:
+        lines.append(f"- {bullet}")
+
+    lines.extend(["", "## Sources"])
+    for source in sources:
+        lines.append(f"- {source}")
+    lines.append("")
+    return "\n".join(frontmatter + lines)
+
+
+def render_subtopic_note_markdown(
+    subtopic_title: str,
+    subtopic_result: dict[str, Any],
+    hub_title: str,
+) -> str:
+    result = subtopic_result.get("result", {}) if isinstance(subtopic_result, dict) else {}
+    summary = str(result.get("summary", "")).strip() or "No summary available."
+    key_points = result.get("answer_bullets", []) or []
+    sources = result.get("sources", []) or []
+
+    lines = [
+        f"# {subtopic_title}",
+        "",
+        "## Summary",
+        summary,
+        "",
+        "## Key Points",
+    ]
+    for bullet in key_points:
+        lines.append(f"- {bullet}")
+
+    lines.extend(["", "## Sources"])
+    for source in sources:
+        lines.append(f"- {source}")
+
+    lines.extend(["", "## Related", f"[[{hub_title}]]", ""])
+    return "\n".join(lines)
+
+
+def write_hub_note(topic_result: dict[str, Any], *, vault_path: str, today: str) -> dict[str, Any]:
+    vault, topics = _validate_vault(vault_path)
+
+    question = str(topic_result.get("question", "")).strip() or "Topic"
+    hub_title = _extract_hub_title(question, topic_result)
+
+    subtopic_items = (
+        topic_result.get("topic_research", {}).get("subtopics", [])
+        if isinstance(topic_result.get("topic_research"), dict)
+        else []
+    )
+    subtopic_titles = [
+        _extract_subtopic_title(item, hub_title)
+        for item in subtopic_items
+    ]
+
+    note_path = _note_path_for_title(topics, hub_title)
+    if note_path.exists():
+        return {
+            "title": hub_title,
+            "note_path": str(note_path.resolve()),
+            "note_filename": note_path.name,
+            "status": "skipped_existing",
+        }
+
+    markdown = render_hub_note_markdown(
+        hub_title,
+        topic_result,
+        subtopic_titles,
+        today,
+        category_title_maps=_load_category_title_maps(vault),
+    )
+    note_path.write_text(markdown, encoding="utf-8")
+    return {
+        "title": hub_title,
+        "note_path": str(note_path.resolve()),
+        "note_filename": note_path.name,
+        "status": "created",
+    }
+
+
+def write_subtopic_note(
+    subtopic_result: dict[str, Any],
+    *,
+    hub_title: str,
+    vault_path: str,
+    today: str,
+) -> dict[str, Any]:
+    _ = today  # reserved for future metadata stamping
+    _, topics = _validate_vault(vault_path)
+
+    title = _extract_subtopic_title(subtopic_result, hub_title)
+    note_path = _note_path_for_title(topics, title)
+    if note_path.exists():
+        return {
+            "title": title,
+            "note_path": str(note_path.resolve()),
+            "note_filename": note_path.name,
+            "status": "skipped_existing",
+        }
+
+    markdown = render_subtopic_note_markdown(title, subtopic_result, hub_title)
+    note_path.write_text(markdown, encoding="utf-8")
+    return {
+        "title": title,
+        "note_path": str(note_path.resolve()),
+        "note_filename": note_path.name,
+        "status": "created",
+    }
+
+
+def publish_research(question: str, topic_result: dict[str, Any], *, vault_path: str, today: str) -> dict[str, Any]:
+    vault, _ = _validate_vault(vault_path)
+
+    enriched_result = dict(topic_result)
+    enriched_result["question"] = question
+    hub = write_hub_note(enriched_result, vault_path=vault_path, today=today)
+    hub_title = str(hub.get("title", "")).strip() or _extract_hub_title(question, topic_result)
+
+    subtopic_items = (
+        topic_result.get("topic_research", {}).get("subtopics", [])
+        if isinstance(topic_result.get("topic_research"), dict)
+        else []
+    )
+    subtopic_notes = [
+        write_subtopic_note(item, hub_title=hub_title, vault_path=vault_path, today=today)
+        for item in subtopic_items
+    ]
+
+    created = sum(1 for item in [hub, *subtopic_notes] if item.get("status") == "created")
+    skipped = sum(1 for item in [hub, *subtopic_notes] if item.get("status") == "skipped_existing")
+
+    return {
+        "mode": "topic_research",
+        "hub": hub,
+        "subtopic_notes": subtopic_notes,
+        "created_count": created,
+        "skipped_existing_count": skipped,
+        "note_path": hub["note_path"],
+        "note_filename": hub["note_filename"],
+        "vault_path": str(vault.resolve()),
+    }
+
+
+def publish_note(question: str, result: dict, *, vault_path: str, today: str) -> dict:
+    if isinstance(result.get("topic_research"), dict):
+        return publish_research(question, result, vault_path=vault_path, today=today)
+
+    vault, topics = _validate_vault(vault_path)
 
     filename = build_note_filename(question, result, today)
     note_path = resolve_note_path(topics, filename)
