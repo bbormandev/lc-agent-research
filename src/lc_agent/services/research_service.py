@@ -1,257 +1,344 @@
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from typing import Any
+
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
-from datetime import datetime, timezone
 
-from lc_agent.prompts.research import GATE_PROMPT, QUERY_PROMPT, ANSWER_PROMPT
-from lc_agent.infra.run_context import RunContext
-from lc_agent.tools.search_tavily import search_web, SearchResult
-from lc_agent.tools.fetch import fetch_url
-from lc_agent.tools.extract import extract_passages
 from lc_agent.infra.run_bundler import RunBundler
+from lc_agent.infra.run_context import RunContext
+from lc_agent.prompts.decomposition import (
+    COMPLEXITY_JSON_SCHEMA,
+    COMPLEXITY_SYSTEM_PROMPT,
+    COMPLEXITY_USER_PROMPT_TEMPLATE,
+)
+from lc_agent.prompts.research import ANSWER_PROMPT, GATE_PROMPT, QUERY_PROMPT
+from lc_agent.services.decomposition_service import (
+    DecompositionResult,
+    DecompositionServiceConfig,
+    decompose_question as run_decomposition,
+)
+from lc_agent.tools.extract import extract_passages
+from lc_agent.tools.fetch import fetch_url
+from lc_agent.tools.search_tavily import SearchResult, search_web
 
 load_dotenv()
 
 
 @dataclass
 class ResearchServiceConfig:
-	model: str = "gpt-4o-mini"
-	temperature: float = 0.0
-	max_sources: int = 5
-	max_chars_per_source: int = 6000
-	total_context_chars: int = 12000  # not currently enforced; leave for now
-	max_queries: int = 3
+    model: str = "gpt-4o-mini"
+    temperature: float = 0.0
+    max_sources: int = 5
+    max_chars_per_source: int = 6000
+    total_context_chars: int = 12000  # not currently enforced; leave for now
+    max_queries: int = 3
+
+
+@dataclass
+class ComplexityResult:
+    is_complex: bool
+    reason: str
 
 
 def decide_should_search(llm: ChatOpenAI, question: str, ctx: RunContext) -> bool:
-	decision = llm.invoke(GATE_PROMPT.format(today=ctx.today, question=question)).content.strip().upper()
-	return decision == "YES"
+    decision = llm.invoke(GATE_PROMPT.format(today=ctx.today, question=question)).content.strip().upper()
+    return decision == "YES"
 
 
 def generate_queries(llm: ChatOpenAI, question: str, max_queries: int, ctx: RunContext) -> list[str]:
-	raw = llm.invoke(QUERY_PROMPT.format(question=question, today=ctx.today)).content
-	data = json.loads(raw)
-	queries = data.get("queries", [])
-	queries = [q.strip() for q in queries if isinstance(q, str) and q.strip()]
-	return queries[:max_queries]
+    raw = llm.invoke(QUERY_PROMPT.format(question=question, today=ctx.today)).content
+    data = json.loads(raw)
+    queries = data.get("queries", [])
+    queries = [q.strip() for q in queries if isinstance(q, str) and q.strip()]
+    return queries[:max_queries]
+
+
+def classify_question_complexity(llm: ChatOpenAI, question: str) -> ComplexityResult:
+    bound = llm.bind(
+        response_format={
+            "type": "json_schema",
+            "json_schema": COMPLEXITY_JSON_SCHEMA,
+        }
+    )
+    raw = bound.invoke(
+        [
+            ("system", COMPLEXITY_SYSTEM_PROMPT),
+            ("user", COMPLEXITY_USER_PROMPT_TEMPLATE.format(question=question)),
+        ]
+    ).content
+    if not isinstance(raw, str):
+        raise RuntimeError("Complexity classifier returned non-text content")
+
+    parsed = json.loads(raw)
+    reason = str(parsed.get("reason", "")).strip()
+    if not reason:
+        reason = "No reason provided."
+    return ComplexityResult(is_complex=bool(parsed.get("is_complex")), reason=reason)
+
+
+def decompose_question(
+    question: str,
+    config: ResearchServiceConfig | None = None,
+) -> DecompositionResult:
+    config = config or ResearchServiceConfig()
+    decomposition_config = DecompositionServiceConfig(
+        model=config.model,
+        temperature=config.temperature,
+    )
+    return run_decomposition(question, decomposition_config)
 
 
 def validate_citations(answer_bullets: list[str], sources: list[str]) -> None:
-	# Sources formatted like "S1: Title - URL"
-	source_ids = set()
-	for s in sources:
-		m = re.match(r"^(S\d+):", s.strip())
-		if m:
-			source_ids.add(m.group(1))
+    # Sources formatted like "S1: Title - URL"
+    source_ids = set()
+    for source in sources:
+        match = re.match(r"^(S\d+):", source.strip())
+        if match:
+            source_ids.add(match.group(1))
 
-	if not source_ids:
-		return  # nothing to validate
+    if not source_ids:
+        return  # nothing to validate
 
-	for b in answer_bullets:
-		m = re.search(r"\[([^\]]+)\]\s*$", b.strip())
-		if not m:
-			raise RuntimeError(f"Bullet missing ending citations: {b}")
+    for bullet in answer_bullets:
+        match = re.search(r"\[([^\]]+)\]\s*$", bullet.strip())
+        if not match:
+            raise RuntimeError(f"Bullet missing ending citations: {bullet}")
 
-		cited = {c.strip() for c in m.group(1).split(",")}
-		bad = [c for c in cited if c not in source_ids]
-		if bad:
-			raise RuntimeError(f"Bullet cites unknown sources {bad}: {b}")
-		
+        cited = {citation.strip() for citation in match.group(1).split(",")}
+        bad = [citation for citation in cited if citation not in source_ids]
+        if bad:
+            raise RuntimeError(f"Bullet cites unknown sources {bad}: {bullet}")
+
+
 def validate_summary(summary: str) -> None:
-	if not isinstance(summary, str) or not summary.strip():
-		raise RuntimeError("Missing or empty summary")
-	if "[" in summary or "]" in summary:
-		raise RuntimeError(f"Summary must not contain citations/brackets: {summary}")
+    if not isinstance(summary, str) or not summary.strip():
+        raise RuntimeError("Missing or empty summary")
+    if "[" in summary or "]" in summary:
+        raise RuntimeError(f"Summary must not contain citations/brackets: {summary}")
 
 
 def validate_note_title(note_title: object) -> str:
-	if not isinstance(note_title, str):
-		raise RuntimeError("Response missing required field: note_title")
-	cleaned = note_title.strip()
-	if not cleaned:
-		raise RuntimeError("Response note_title must be non-empty")
-	return cleaned
-	
-def serialize_search_result(r: SearchResult) -> dict:
+    if not isinstance(note_title, str):
+        raise RuntimeError("Response missing required field: note_title")
+    cleaned = note_title.strip()
+    if not cleaned:
+        raise RuntimeError("Response note_title must be non-empty")
+    return cleaned
+
+
+def serialize_search_result(result: SearchResult) -> dict[str, Any]:
     return {
-        "title": r.title,
-        "url": r.url,
-        "snippet": r.snippet,
+        "title": result.title,
+        "url": result.url,
+        "snippet": result.snippet,
     }
 
-def serialize_results(results: list[SearchResult]) -> list[dict]:
-    return [serialize_search_result(r) for r in results]
+
+def serialize_results(results: list[SearchResult]) -> list[dict[str, Any]]:
+    return [serialize_search_result(result) for result in results]
+
 
 def url_hash(url: str) -> str:
     return hashlib.sha256(url.encode("utf-8")).hexdigest()[:16]
 
 
+def _run_single_topic_research(
+    llm: ChatOpenAI,
+    question: str,
+    config: ResearchServiceConfig,
+    ctx: RunContext,
+    bundler: RunBundler,
+) -> tuple[dict[str, Any], bool, list[str]]:
+    did_search = decide_should_search(llm, question, ctx)
+
+    context = ""
+    sources_list: list[str] = []
+    search_queries: list[str] = []
+
+    if did_search:
+        search_queries = generate_queries(llm, question, config.max_queries, ctx)
+        if not search_queries:
+            search_queries = [question]
+        bundler.write_json("search_queries.json", search_queries)
+
+        per_query_limit = max(config.max_sources, 5)
+        buckets: list[list[SearchResult]] = []
+        search_dump = []
+        for query in search_queries:
+            try:
+                results = search_web(query)[:per_query_limit]
+            except Exception:
+                results = []
+
+            buckets.append(results)
+            search_dump.append(
+                {
+                    "query": query,
+                    "results": [
+                        {"title": result.title, "url": result.url, "snippet": result.snippet}
+                        for result in results
+                    ],
+                }
+            )
+        bundler.write_json("search_results.json", search_dump)
+
+        selected_results: list[SearchResult] = []
+        seen_urls: set[str] = set()
+
+        # Round-robin pick 1 from each bucket until max_sources
+        index = 0
+        while len(selected_results) < config.max_sources:
+            progressed = False
+            for bucket in buckets:
+                if index < len(bucket):
+                    result = bucket[index]
+                    url = (result.url or "").strip()
+                    if url and url not in seen_urls:
+                        seen_urls.add(url)
+                        selected_results.append(result)
+                        progressed = True
+                        if len(selected_results) >= config.max_sources:
+                            break
+            if not progressed:
+                break
+            index += 1
+        bundler.write_json("selected_sources.json", serialize_results(selected_results))
+
+        passage_blocks: list[str] = []
+        for source_idx, result in enumerate(selected_results, start=1):
+            sources_list.append(f"S{source_idx}: {result.title} - {result.url}")
+
+            try:
+                doc = fetch_url(result.url, max_chars=config.max_chars_per_source)
+                bundler.write_json(
+                    f"fetch/{url_hash(result.url)}.json",
+                    {
+                        "url": doc.url,
+                        "title": doc.title,
+                        "text": doc.text,
+                    },
+                )
+
+                passages = extract_passages(
+                    llm,
+                    question,
+                    title=result.title or (doc.title or "Untitled"),
+                    url=result.url,
+                    text=doc.text,
+                )
+                bundler.write_json(
+                    f"extracts/{url_hash(result.url)}.json",
+                    {
+                        "source_id": f"S{source_idx}",
+                        "title": result.title,
+                        "url": result.url,
+                        "passages": passages,
+                    },
+                )
+
+                block_lines = [
+                    f"SOURCE_ID: S{source_idx}",
+                    f"TITLE: {result.title}",
+                    f"URL: {result.url}",
+                    "PASSAGES:",
+                ]
+                for passage in passages:
+                    block_lines.append(f"- {passage['quote']}  (why: {passage['why']})")
+                passage_blocks.append("\n".join(block_lines))
+            except Exception as exc:
+                passage_blocks.append(
+                    f"SOURCE_ID: S{source_idx}\n"
+                    f"TITLE: {result.title}\n"
+                    f"URL: {result.url}\n"
+                    "PASSAGES:\n"
+                    f"- (EXTRACTION FAILED: {exc})\n"
+                    f"- SNIPPET: {result.snippet}"
+                )
+
+        context = "\n\n".join(passage_blocks)
+        bundler.write_text("context.txt", context)
+
+    prompt = ANSWER_PROMPT.format(
+        question=question,
+        context=context,
+        did_search=str(did_search).lower(),
+        search_queries=json.dumps(search_queries if did_search else []),
+        sources_json=json.dumps(sources_list if did_search else []),
+    )
+
+    raw = llm.invoke(prompt).content
+    data = json.loads(raw)
+
+    data["note_title"] = validate_note_title(data.get("note_title"))
+    validate_citations(data.get("answer_bullets", []), data.get("sources", []))
+    summary = data.get("summary")
+    if summary is None:
+        raise RuntimeError("Response missing required field: summary")
+    validate_summary(summary)
+
+    if did_search and not data.get("sources"):
+        raise RuntimeError("Expected sources when did_search=true, got empty sources.")
+
+    return data, did_search, search_queries
+
+
 def ask(question: str, config: ResearchServiceConfig, ctx: RunContext) -> dict:
-	# Set up bundler and LLM
-	bundler = RunBundler(base_dir="runs")
-	run_id = bundler.start()
-	llm = ChatOpenAI(model=config.model, temperature=config.temperature)
+    bundler = RunBundler(base_dir="runs")
+    run_id = bundler.start()
+    llm = ChatOpenAI(model=config.model, temperature=config.temperature)
 
-	# Save initial data to bundler
-	meta = {
-		"run_id": run_id,
-		"started_at_utc": datetime.now(timezone.utc).isoformat(),
-		"question": question,
-		"today": ctx.today,
-		"model": config.model,
-		"config": {
-			"max_sources": config.max_sources,
-			"max_queries": config.max_queries,
-			"max_chars_per_source": config.max_chars_per_source,
-		},
-	}
-	bundler.write_json("meta.json", meta)
+    meta = {
+        "run_id": run_id,
+        "started_at_utc": datetime.now(timezone.utc).isoformat(),
+        "question": question,
+        "today": ctx.today,
+        "model": config.model,
+        "config": {
+            "max_sources": config.max_sources,
+            "max_queries": config.max_queries,
+            "max_chars_per_source": config.max_chars_per_source,
+        },
+    }
+    bundler.write_json("meta.json", meta)
 
-	# Decide if we need to perform a web search
-	did_search = decide_should_search(llm, question, ctx)
-	meta["did_search"] = did_search
-	bundler.write_json("meta.json", meta)
+    complexity = classify_question_complexity(llm, question)
+    meta["complexity"] = asdict(complexity)
+    bundler.write_json("meta.json", meta)
 
-	context = ""
-	sources_list: list[str] = []
-	search_queries: list[str] = []
+    decomposition_payload: dict[str, Any] | None = None
+    if complexity.is_complex:
+        decomposition = decompose_question(question, config=config)
+        decomposition_payload = asdict(decomposition)
+        bundler.write_json("decomposition.json", decomposition_payload)
 
-	if did_search:
-		# Generate list of search queries
-		search_queries = generate_queries(llm, question, config.max_queries, ctx)
-		if not search_queries:
-			search_queries = [question]
-		bundler.write_json("search_queries.json", search_queries)
+    data, did_search, search_queries = _run_single_topic_research(
+        llm=llm,
+        question=question,
+        config=config,
+        ctx=ctx,
+        bundler=bundler,
+    )
+    if decomposition_payload is not None:
+        data["decomposition"] = decomposition_payload
 
-		# Perform searches and store in buckets
-		PER_QUERY_LIMIT = max(config.max_sources, 5)
-		buckets: list[list[SearchResult]] = []
-		search_dump = []
-		for q in search_queries:
-			try:
-				res = search_web(q)[:PER_QUERY_LIMIT]
-			except Exception:
-				res = []
+    data["_meta"] = {
+        "is_complex": complexity.is_complex,
+        "complexity_reason": complexity.reason,
+        "did_search": did_search,
+        "search_queries": search_queries,
+        "max_sources": config.max_sources,
+        "model": config.model,
+        "run_id": run_id,
+        "run_dir": str(bundler.path()),
+    }
+    meta["did_search"] = did_search
 
-			buckets.append(res)
-			search_dump.append({
-				"query": q,
-				"results": [
-					{"title": r.title, "url": r.url, "snippet": r.snippet}
-					for r in res
-				],
-			})
-		bundler.write_json("search_results.json", search_dump)
+    bundler.write_json("final.json", data)
+    meta = bundler.finish_meta(meta)
+    bundler.write_json("meta.json", meta)
 
-		results: list[SearchResult] = []
-		seen_urls: set[str] = set()
-
-		# Round-robin pick 1 from each bucket until max_sources
-		i = 0
-		while len(results) < config.max_sources:
-			progressed = False
-			for b in buckets:
-				if i < len(b):
-					r = b[i]
-					url = (r.url or "").strip()
-					if url and url not in seen_urls:
-						seen_urls.add(url)
-						results.append(r)
-						progressed = True
-						if len(results) >= config.max_sources:
-							break
-			if not progressed:
-				break
-			i += 1
-		# results not contains a spread of search results from each query
-		bundler.write_json("selected_sources.json", serialize_results(results))
-
-		# Pull passages from our built out list of results
-		passage_blocks: list[str] = []
-		for idx, r in enumerate(results, start=1):
-			sources_list.append(f"S{idx}: {r.title} - {r.url}")
-
-			try:
-				doc = fetch_url(r.url, max_chars=config.max_chars_per_source)
-				bundler.write_json(f"fetch/{url_hash(r.url)}.json", {
-					"url": doc.url,
-					"title": doc.title,
-					"text": doc.text
-				})
-
-				passages = extract_passages(
-					llm,
-					question,
-					title=r.title or (doc.title or "Untitled"),
-					url=r.url,
-					text=doc.text,
-				)
-				bundler.write_json(f"extracts/{url_hash(r.url)}.json", {
-					"source_id": f"S{idx}",
-					"title": r.title,
-					"url": r.url,
-					"passages": passages,
-				})
-
-				block_lines = [
-					f"SOURCE_ID: S{idx}",
-					f"TITLE: {r.title}",
-					f"URL: {r.url}",
-					"PASSAGES:",
-				]
-				for p in passages:
-					block_lines.append(f"- {p['quote']}  (why: {p['why']})")
-
-				passage_blocks.append("\n".join(block_lines))
-
-			except Exception as e:
-				passage_blocks.append(
-					f"SOURCE_ID: S{idx}\n"
-					f"TITLE: {r.title}\n"
-					f"URL: {r.url}\n"
-					"PASSAGES:\n"
-					f"- (EXTRACTION FAILED: {e})\n"
-					f"- SNIPPET: {r.snippet}"
-				)
-
-		context = "\n\n".join(passage_blocks)
-		bundler.write_text("context.txt", context)
-
-	prompt = ANSWER_PROMPT.format(
-		question=question,
-		context=context,
-		did_search=str(did_search).lower(),
-		search_queries=json.dumps(search_queries if did_search else []),
-		sources_json=json.dumps(sources_list if did_search else []),
-	)
-
-	raw = llm.invoke(prompt).content
-	data = json.loads(raw)
-
-	data["note_title"] = validate_note_title(data.get("note_title"))
-	validate_citations(data.get("answer_bullets", []), data.get("sources", []))
-	summary = data.get("summary")
-	if summary is None:
-		raise RuntimeError("Response missing required field: summary")
-	validate_summary(summary)
-
-	if did_search and not data.get("sources"):
-		raise RuntimeError("Expected sources when did_search=true, got empty sources.")
-
-	# Helpful debug fields for CLI output (optional)
-	data["_meta"] = {
-		"did_search": did_search,
-		"search_queries": search_queries,
-		"max_sources": config.max_sources,
-		"model": config.model,
-		"run_id": run_id,
-		"run_dir": str(bundler.path())
-	}
-	bundler.write_json("final.json", data)
-	meta = bundler.finish_meta(meta)
-	bundler.write_json("meta.json", meta)
-
-	return data
+    return data
