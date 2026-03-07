@@ -19,6 +19,7 @@ from lc_agent.prompts.research import ANSWER_PROMPT, GATE_PROMPT, QUERY_PROMPT
 from lc_agent.services.decomposition_service import (
     DecompositionResult,
     DecompositionServiceConfig,
+    Subtopic,
     decompose_question as run_decomposition,
 )
 from lc_agent.tools.extract import extract_passages
@@ -42,6 +43,21 @@ class ResearchServiceConfig:
 class ComplexityResult:
     is_complex: bool
     reason: str
+
+
+@dataclass
+class SubtopicResearchResult:
+    subtopic: Subtopic
+    result: dict[str, Any]
+    did_search: bool
+    search_queries: list[str]
+
+
+@dataclass
+class TopicResearchResult:
+    question: str
+    decomposition: DecompositionResult
+    subtopics: list[SubtopicResearchResult]
 
 
 def decide_should_search(llm: ChatOpenAI, question: str, ctx: RunContext) -> bool:
@@ -152,8 +168,15 @@ def _run_single_topic_research(
     config: ResearchServiceConfig,
     ctx: RunContext,
     bundler: RunBundler,
+    artifact_prefix: str = "",
+    force_search: bool = False,
 ) -> tuple[dict[str, Any], bool, list[str]]:
-    did_search = decide_should_search(llm, question, ctx)
+    def path_for(name: str) -> str:
+        if not artifact_prefix:
+            return name
+        return f"{artifact_prefix.rstrip('/')}/{name}"
+
+    did_search = force_search or decide_should_search(llm, question, ctx)
 
     context = ""
     sources_list: list[str] = []
@@ -163,7 +186,7 @@ def _run_single_topic_research(
         search_queries = generate_queries(llm, question, config.max_queries, ctx)
         if not search_queries:
             search_queries = [question]
-        bundler.write_json("search_queries.json", search_queries)
+        bundler.write_json(path_for("search_queries.json"), search_queries)
 
         per_query_limit = max(config.max_sources, 5)
         buckets: list[list[SearchResult]] = []
@@ -184,7 +207,7 @@ def _run_single_topic_research(
                     ],
                 }
             )
-        bundler.write_json("search_results.json", search_dump)
+        bundler.write_json(path_for("search_results.json"), search_dump)
 
         selected_results: list[SearchResult] = []
         seen_urls: set[str] = set()
@@ -206,7 +229,7 @@ def _run_single_topic_research(
             if not progressed:
                 break
             index += 1
-        bundler.write_json("selected_sources.json", serialize_results(selected_results))
+        bundler.write_json(path_for("selected_sources.json"), serialize_results(selected_results))
 
         passage_blocks: list[str] = []
         for source_idx, result in enumerate(selected_results, start=1):
@@ -215,7 +238,7 @@ def _run_single_topic_research(
             try:
                 doc = fetch_url(result.url, max_chars=config.max_chars_per_source)
                 bundler.write_json(
-                    f"fetch/{url_hash(result.url)}.json",
+                    path_for(f"fetch/{url_hash(result.url)}.json"),
                     {
                         "url": doc.url,
                         "title": doc.title,
@@ -231,7 +254,7 @@ def _run_single_topic_research(
                     text=doc.text,
                 )
                 bundler.write_json(
-                    f"extracts/{url_hash(result.url)}.json",
+                    path_for(f"extracts/{url_hash(result.url)}.json"),
                     {
                         "source_id": f"S{source_idx}",
                         "title": result.title,
@@ -260,7 +283,7 @@ def _run_single_topic_research(
                 )
 
         context = "\n\n".join(passage_blocks)
-        bundler.write_text("context.txt", context)
+        bundler.write_text(path_for("context.txt"), context)
 
     prompt = ANSWER_PROMPT.format(
         question=question,
@@ -286,6 +309,33 @@ def _run_single_topic_research(
     return data, did_search, search_queries
 
 
+def research_subtopic(
+    subtopic: Subtopic,
+    *,
+    llm: ChatOpenAI,
+    config: ResearchServiceConfig,
+    ctx: RunContext,
+    bundler: RunBundler,
+) -> SubtopicResearchResult:
+    subtopic_prefix = f"subtopics/{subtopic.id}"
+    result, did_search, search_queries = _run_single_topic_research(
+        llm=llm,
+        question=subtopic.question,
+        config=config,
+        ctx=ctx,
+        bundler=bundler,
+        artifact_prefix=subtopic_prefix,
+        force_search=True,
+    )
+    bundler.write_json(f"{subtopic_prefix}/final.json", result)
+    return SubtopicResearchResult(
+        subtopic=subtopic,
+        result=result,
+        did_search=did_search,
+        search_queries=search_queries,
+    )
+
+
 def ask(question: str, config: ResearchServiceConfig, ctx: RunContext) -> dict:
     bundler = RunBundler(base_dir="runs")
     run_id = bundler.start()
@@ -309,11 +359,12 @@ def ask(question: str, config: ResearchServiceConfig, ctx: RunContext) -> dict:
     meta["complexity"] = asdict(complexity)
     bundler.write_json("meta.json", meta)
 
-    decomposition_payload: dict[str, Any] | None = None
+    decomposition_result: DecompositionResult | None = None
     if complexity.is_complex:
-        decomposition = decompose_question(question, config=config)
-        decomposition_payload = asdict(decomposition)
-        bundler.write_json("decomposition.json", decomposition_payload)
+        decomposition_result = decompose_question(question, config=config)
+        if len(decomposition_result.subtopics) < 4 or len(decomposition_result.subtopics) > 7:
+            raise RuntimeError("Complex questions must decompose into 4-7 subtopics")
+        bundler.write_json("decomposition.json", asdict(decomposition_result))
 
     data, did_search, search_queries = _run_single_topic_research(
         llm=llm,
@@ -322,14 +373,34 @@ def ask(question: str, config: ResearchServiceConfig, ctx: RunContext) -> dict:
         ctx=ctx,
         bundler=bundler,
     )
-    if decomposition_payload is not None:
-        data["decomposition"] = decomposition_payload
+    subtopic_results: list[SubtopicResearchResult] = []
+    if decomposition_result is not None:
+        data["decomposition"] = asdict(decomposition_result)
+        for subtopic in decomposition_result.subtopics:
+            subtopic_results.append(
+                research_subtopic(
+                    subtopic,
+                    llm=llm,
+                    config=config,
+                    ctx=ctx,
+                    bundler=bundler,
+                )
+            )
+        topic_result = TopicResearchResult(
+            question=question,
+            decomposition=decomposition_result,
+            subtopics=subtopic_results,
+        )
+        topic_result_payload = asdict(topic_result)
+        data["topic_research"] = topic_result_payload
+        bundler.write_json("topic_research.json", topic_result_payload)
 
     data["_meta"] = {
         "is_complex": complexity.is_complex,
         "complexity_reason": complexity.reason,
         "did_search": did_search,
         "search_queries": search_queries,
+        "subtopics_researched": len(subtopic_results),
         "max_sources": config.max_sources,
         "model": config.model,
         "run_id": run_id,
